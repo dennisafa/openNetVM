@@ -182,16 +182,16 @@ onvm_nf_start(struct onvm_nf_info *nf_info) {
                 ? onvm_nf_next_instance_id()
                 : nf_info->instance_id;
 
-//        if (nf_info->service_id >= MAX_SERVICES) {
-//                // Maximum service ID exceeded
-//                nf_info->status = NF_NO_IDS;
-//                return 1;
-//        }
 
         if (nf_id >= MAX_NFS) {
                 // There are no more available IDs for this NF
                 nf_info->status = NF_NO_IDS;
-                RTE_LOG(INFO, APP, "Oh the huge manatee! Unable to allocate msg from pool :(\n");
+                return 1;
+        }
+
+        if (nf_info->service_id >= MAX_SERVICES) {
+        // Maximum service ID exceeded
+                nf_info->status = NF_NO_IDS;
                 return 1;
         }
 
