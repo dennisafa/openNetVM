@@ -191,7 +191,7 @@ onvm_nf_start(struct onvm_nf_info *nf_info) {
 
         if (nf_info->service_id >= MAX_SERVICES) {
         // Maximum service ID exceeded
-                nf_info->status = NF_NO_IDS;
+                nf_info->status = NF_MAX_SERVICES;
                 return 1;
         }
 
