@@ -307,8 +307,7 @@ onvm_nflib_start_nf(struct onvm_nf_info *nf_info) {
 
         /* Wait for a NF id to be assigned by the manager */
         RTE_LOG(INFO, APP, "Waiting for manager to assign an ID...\n");
-        RTE_LOG(INFO, APP, "Waiting for manager to assign an ID...\n");
-        printf("Test", %d)
+        RTE_LOG(INFO, APP, "Testing if something prints");
 
         for (; nf_info->status == (uint16_t)NF_WAITING_FOR_ID ;) {
                 sleep(1);
