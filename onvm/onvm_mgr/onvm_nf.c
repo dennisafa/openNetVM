@@ -189,11 +189,11 @@ onvm_nf_start(struct onvm_nf_info *nf_info) {
                 return 1;
         }
 
-        if (nf_info->service_id >= MAX_SERVICES) {
-                // Maximum service ID exceeded
-                nf_info->status = NF_SERVICE_MAX;
-                return 1;
-        }
+//        if (nf_info->service_id >= MAX_SERVICES) {
+//                // Maximum service ID exceeded
+//                nf_info->status = NF_SERVICE_MAX;
+//                return 1;
+//        }
 
         if (onvm_nf_is_valid(&nfs[nf_id])) {
                 // This NF is trying to declare an ID already in use
