@@ -55,7 +55,7 @@
 #include "onvm_stats.h"
 #include "onvm_pkt.h"
 #include "onvm_nf.h"
-
+#include "../onvm_nflib/onvm_pkt_common.h"
 
 /****************************Internal Declarations****************************/
 

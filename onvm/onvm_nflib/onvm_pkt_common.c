@@ -50,7 +50,9 @@
 
 #include "onvm_pkt_common.h"
 
-
+#include <stdio.h>
+#include <stdint.h>
+#include <string.h>
 /**********************Internal Functions Prototypes**************************/
 
 
@@ -98,6 +100,9 @@ onvm_pkt_process_tx_batch(struct queue_mgr *tx_mgr, struct rte_mbuf *pkts[], uin
         struct onvm_pkt_meta *meta;
         struct packet_buf *out_buf;
 
+	struct onvm_nf *dst_nf;		//destination NF
+	struct rte_mbuf *pkts_clone[tx_count];  //mbuf to save copied packet
+
         if (tx_mgr == NULL || pkts == NULL || nf == NULL)
                 return;
 
@@ -116,7 +121,31 @@ onvm_pkt_process_tx_batch(struct queue_mgr *tx_mgr, struct rte_mbuf *pkts[], uin
                         onvm_pkt_process_next_action(tx_mgr, pkts[i], nf);
                 } else if (meta->action == ONVM_NF_ACTION_TONF) {
                         nf->stats.act_tonf++;
-                        onvm_pkt_enqueue_nf(tx_mgr, meta->destination, pkts[i], nf);
+
+			/* Packet Copy Function*/
+			dst_nf = &nfs[meta->destination];
+			pkts_clone[i] = rte_pktmbuf_alloc(dst_nf->nf_pool);
+			if (pkts_clone[i] == NULL){
+                        	printf("Packet allocation failed!!\n");
+                                exit(-1);
+                        }
+
+ 			if (rte_pktmbuf_append(pkts_clone[i], pkts[i]->pkt_len) == NULL){
+                        	printf("Append Failed!!!\n");
+                                exit(-1);
+                        }
+
+ 			if (memcpy (rte_pktmbuf_mtod(pkts_clone[i], char *), rte_pktmbuf_mtod(pkts[i], char *), pkts[i]->pkt_len) == NULL){
+                        	printf("Packet Data Copy  Failed!!!\n");
+                       	}
+
+ 			pkts_clone[i]->udata64 = pkts[i]->udata64;
+			/* End Packet Copy Function*/
+
+                        //onvm_pkt_enqueue_nf(tx_mgr, meta->destination, pkts[i], nf);
+			onvm_pkt_enqueue_nf(tx_mgr, meta->destination, pkts_clone[i],nf);
+			onvm_pkt_drop(pkts[i]);		//drop original packet
+
                 } else if (meta->action == ONVM_NF_ACTION_OUT) {
                         nf->stats.act_out++;
                         if (tx_mgr->mgr_type_t == MGR) {

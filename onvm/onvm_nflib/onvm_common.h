@@ -46,6 +46,7 @@
 
 #include <rte_mbuf.h>
 #include <rte_ether.h>
+#include <rte_mempool.h>
 
 #include "onvm_msg_common.h"
 #include "onvm_config_common.h"
@@ -195,6 +196,7 @@ struct onvm_nf {
         struct rte_ring *tx_q;
         struct rte_ring *msg_q;
         struct onvm_nf_info *info;
+	struct rte_mempool *nf_pool;
         uint16_t instance_id;
         /* Advanced ring mode or packet handler mode */
         uint8_t nf_mode;
@@ -294,7 +296,7 @@ struct onvm_service_chain {
 #define NF_CORE_BUSY 12          // The manually selected core is busy
 
 #define NF_NO_ID -1
-#define ONVM_NF_HANDLE_TX 1     // should be true if NFs primarily pass packets to each other
+#define ONVM_NF_HANDLE_TX 0     // should be true if NFs primarily pass packets to each other
 
 
 /*

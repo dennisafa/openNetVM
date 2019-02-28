@@ -150,12 +150,12 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
                 counter = 0;
         }
 
-        if (pkt->port == 0) {
-                meta->destination = 1;
-        }
-        else {
+//        if (pkt->port == 0) {
+//                meta->destination = 1;
+//        }
+//        else {
                 meta->destination = 0;
-        }
+//        }
         meta->action = ONVM_NF_ACTION_OUT;
         return 0;
 }

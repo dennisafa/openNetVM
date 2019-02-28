@@ -60,6 +60,7 @@ struct port_info *ports = NULL;
 struct core_status *cores = NULL;
 
 struct rte_mempool *pktmbuf_pool;
+struct rte_mempool *nf_pool[MAX_NFS];
 struct rte_mempool *nf_info_pool;
 struct rte_mempool *nf_msg_pool;
 struct rte_ring *incoming_msg_queue;
@@ -76,6 +77,7 @@ static int init_nf_info_pool(void);
 static int init_nf_msg_pool(void);
 static int init_port(uint8_t port_num);
 static int init_shm_rings(void);
+static int init_nf_pools(void);
 static int init_info_queue(void);
 static void check_all_ports_link_status(uint8_t port_num, uint32_t port_mask);
 
@@ -199,6 +201,12 @@ init(int argc, char *argv[]) {
         if (retval != 0)
                 rte_exit(EXIT_FAILURE, "Cannot create needed mbuf pools\n");
 
+        /*initialise the NF pools separately*/
+        retval = init_nf_pools();
+        if (retval != 0) {
+                rte_exit(EXIT_FAILURE, "Cannot create needed nf pools\n");
+        }
+
         /* initialise nf info pool */
         retval = init_nf_info_pool();
         if (retval != 0) {
@@ -321,10 +329,13 @@ init_nf_info_pool(void)
  */
 static int
 init_port(uint8_t port_num) {
-        const uint16_t rx_rings = ONVM_NUM_RX_THREADS;
+        //const uint16_t rx_rings = ONVM_NUM_RX_THREADS;
+	const uint16_t rx_rings = 1;		//Smart NIC SRIOV has only 1 rx queue
         uint16_t rx_ring_size = RTE_MP_RX_DESC_DEFAULT;
         /* Set the number of tx_rings equal to the tx threads. This mimics the onvm_mgr tx thread calculation. */
-        const uint16_t tx_rings = rte_lcore_count() - rx_rings - ONVM_NUM_MGR_AUX_THREADS;
+//        const uint16_t tx_rings = rte_lcore_count() - rx_rings - ONVM_NUM_MGR_AUX_THREADS;
+	const uint16_t tx_rings = 1;	//Smart NIC SRIOV has only 1 tx queue
+
         uint16_t tx_ring_size = RTE_MP_TX_DESC_DEFAULT;
 
         struct rte_eth_rxconf rxq_conf;
@@ -373,19 +384,27 @@ init_port(uint8_t port_num) {
         rxq_conf = dev_info.default_rxconf;
         rxq_conf.offloads = local_port_conf.rxmode.offloads;
         for (q = 0; q < rx_rings; q++) {
+		printf("setting up rx queue for port #%d\n", port_num);
                 retval = rte_eth_rx_queue_setup(port_num, q, rx_ring_size,
                                 rte_eth_dev_socket_id(port_num),
                                 &rxq_conf, pktmbuf_pool);
-                if (retval < 0) return retval;
+                if (retval < 0) {
+			return retval;
+			printf("port #%d rx queue setup failed!!\n", port_num);
+		}
         }
 
         txq_conf = dev_info.default_txconf;
         txq_conf.offloads = port_conf.txmode.offloads;
         for (q = 0; q < tx_rings; q++) {
+		printf("setting up tx queue for port #%d\n", port_num);
                 retval = rte_eth_tx_queue_setup(port_num, q, tx_ring_size,
                                 rte_eth_dev_socket_id(port_num),
                                 &txq_conf);
-                if (retval < 0) return retval;
+                if (retval < 0) {
+			return retval;
+			printf("port #%d tx queue setup failed!!\n", port_num);
+		}
         }
 
         rte_eth_promiscuous_enable(port_num);
@@ -443,6 +462,36 @@ init_shm_rings(void) {
                         rte_exit(EXIT_FAILURE, "Cannot create msg queue for NF %u\n", i);
         }
         return 0;
+}
+
+/**
+ * Create seperate pools for each NF
+ */
+static int
+init_nf_pools(void) {
+	uint16_t i;
+
+ 	char name[10];
+
+ 	const unsigned num_mbufs = (MAX_NFS * MBUFS_PER_NF) \
+                        		+ (ports->num_ports * MBUFS_PER_PORT);
+//	for (i = 0; i < MAX_NFS; i+=2) {
+	for (i = 0; i < 4; i++) {
+		nfs[i].instance_id = i;
+//		nfs[i+1].instance_id = i+1;
+//		sprintf(name, "pool-%d", nfs[i].instance_id);
+		sprintf(name, "pool-%d", i);
+		printf("Creating mbuf pool '%s' [%u mbufs] ...\n",
+                        name, num_mbufs);
+		nfs[i].nf_pool = rte_mempool_create(name, num_mbufs,
+	                        MBUF_SIZE, MBUF_CACHE_SIZE,
+	                        sizeof(struct rte_pktmbuf_pool_private), rte_pktmbuf_pool_init,
+	                        NULL, rte_pktmbuf_init, NULL, rte_socket_id(), NO_FLAGS);
+//		nfs[i+1].nf_pool = nfs[i].nf_pool;
+		if (nfs[i].nf_pool == NULL)
+			rte_exit(EXIT_FAILURE, "Cannot create mem pool for NF %u\n", i);
+	}
+	return 0;
 }
 
 /**
