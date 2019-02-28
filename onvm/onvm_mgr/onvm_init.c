@@ -476,7 +476,7 @@ init_nf_pools(void) {
  	const unsigned num_mbufs = (MAX_NFS * MBUFS_PER_NF) \
                         		+ (ports->num_ports * MBUFS_PER_PORT);
 //	for (i = 0; i < MAX_NFS; i+=2) {
-	for (i = 0; i < 4; i++) {
+	for (i = 0; i < 3; i++) {
 		nfs[i].instance_id = i;
 //		nfs[i+1].instance_id = i+1;
 //		sprintf(name, "pool-%d", nfs[i].instance_id);
