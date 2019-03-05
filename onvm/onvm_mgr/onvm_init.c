@@ -60,7 +60,7 @@ struct port_info *ports = NULL;
 struct core_status *cores = NULL;
 
 struct rte_mempool *pktmbuf_pool;
-struct rte_mempool *nf_pool[MAX_NFS];
+struct rte_mempool *nf_pool[4];		//now we create 4 separate pools
 struct rte_mempool *nf_info_pool;
 struct rte_mempool *nf_msg_pool;
 struct rte_ring *incoming_msg_queue;
@@ -469,27 +469,33 @@ init_shm_rings(void) {
  */
 static int
 init_nf_pools(void) {
-	uint16_t i;
+	uint16_t i, j;
 
  	char name[10];
 
  	const unsigned num_mbufs = (MAX_NFS * MBUFS_PER_NF) \
                         		+ (ports->num_ports * MBUFS_PER_PORT);
-//	for (i = 0; i < MAX_NFS; i+=2) {
 	for (i = 0; i < 3; i++) {
-		nfs[i].instance_id = i;
-//		nfs[i+1].instance_id = i+1;
-//		sprintf(name, "pool-%d", nfs[i].instance_id);
+		//nfs[i].instance_id = i;
 		sprintf(name, "pool-%d", i);
 		printf("Creating mbuf pool '%s' [%u mbufs] ...\n",
                         name, num_mbufs);
-		nfs[i].nf_pool = rte_mempool_create(name, num_mbufs,
-	                        MBUF_SIZE, MBUF_CACHE_SIZE,
-	                        sizeof(struct rte_pktmbuf_pool_private), rte_pktmbuf_pool_init,
-	                        NULL, rte_pktmbuf_init, NULL, rte_socket_id(), NO_FLAGS);
-//		nfs[i+1].nf_pool = nfs[i].nf_pool;
-		if (nfs[i].nf_pool == NULL)
+		//nfs[i].nf_pool = rte_mempool_create(name, num_mbufs,
+	        //                MBUF_SIZE, MBUF_CACHE_SIZE,
+	        //                sizeof(struct rte_pktmbuf_pool_private), rte_pktmbuf_pool_init,
+	        //                NULL, rte_pktmbuf_init, NULL, rte_socket_id(), NO_FLAGS);
+		nf_pool[i] = rte_mempool_create(name, num_mbufs,
+                                MBUF_SIZE, MBUF_CACHE_SIZE,
+                                sizeof(struct rte_pktmbuf_pool_private), rte_pktmbuf_pool_init,
+                                NULL, rte_pktmbuf_init, NULL, rte_socket_id(), NO_FLAGS);
+
+		if (nf_pool[i] == NULL)
 			rte_exit(EXIT_FAILURE, "Cannot create mem pool for NF %u\n", i);
+	}
+
+	for (i = 0; i < MAX_NFS; i++) {		//assign NFs to memory pools (16 NFs, 4 pools)
+		j = i % 4;
+		nfs[i].nf_pool = nf_pool[j];
 	}
 	return 0;
 }

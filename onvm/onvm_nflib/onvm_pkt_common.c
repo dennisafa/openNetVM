@@ -124,27 +124,34 @@ onvm_pkt_process_tx_batch(struct queue_mgr *tx_mgr, struct rte_mbuf *pkts[], uin
 
 			/* Packet Copy Function*/
 			dst_nf = &nfs[meta->destination];
-			pkts_clone[i] = rte_pktmbuf_alloc(dst_nf->nf_pool);
-			if (pkts_clone[i] == NULL){
-                        	printf("Packet allocation failed!!\n");
-                                exit(-1);
-                        }
 
- 			if (rte_pktmbuf_append(pkts_clone[i], pkts[i]->pkt_len) == NULL){
-                        	printf("Append Failed!!!\n");
-                                exit(-1);
-                        }
+			if (dst_nf->nf_pool == nf->nf_pool){		//check if the NFs are sharing same pool (same tenant)
+				onvm_pkt_enqueue_nf(tx_mgr, meta->destination, pkts[i], nf);
+			}
+			else {
+				pkts_clone[i] = rte_pktmbuf_alloc(dst_nf->nf_pool);
+				if (pkts_clone[i] == NULL){
+	                        	printf("Packet allocation failed!!\n");
+	                                exit(-1);
+	                        }
 
- 			if (memcpy (rte_pktmbuf_mtod(pkts_clone[i], char *), rte_pktmbuf_mtod(pkts[i], char *), pkts[i]->pkt_len) == NULL){
-                        	printf("Packet Data Copy  Failed!!!\n");
-                       	}
+	 			if (rte_pktmbuf_append(pkts_clone[i], pkts[i]->pkt_len) == NULL){
+	                        	printf("Append Failed!!!\n");
+	                                exit(-1);
+	                        }
 
- 			pkts_clone[i]->udata64 = pkts[i]->udata64;
-			/* End Packet Copy Function*/
+	 			if (memcpy (rte_pktmbuf_mtod(pkts_clone[i], char *), rte_pktmbuf_mtod(pkts[i], char *), pkts[i]->pkt_len) == NULL){
+	                        	printf("Packet Data Copy  Failed!!!\n");
+	                       	}
 
-                        //onvm_pkt_enqueue_nf(tx_mgr, meta->destination, pkts[i], nf);
-			onvm_pkt_enqueue_nf(tx_mgr, meta->destination, pkts_clone[i],nf);
-			onvm_pkt_drop(pkts[i]);		//drop original packet
+	 			pkts_clone[i]->udata64 = pkts[i]->udata64;
+				pkts_clone[i]->port = pkts[i]->port;
+				/* End Packet Copy Function*/
+
+	                        //onvm_pkt_enqueue_nf(tx_mgr, meta->destination, pkts[i], nf);
+				onvm_pkt_enqueue_nf(tx_mgr, meta->destination, pkts_clone[i],nf);
+				onvm_pkt_drop(pkts[i]);		//drop original packet
+			}
 
                 } else if (meta->action == ONVM_NF_ACTION_OUT) {
                         nf->stats.act_out++;
