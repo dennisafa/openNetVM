@@ -60,7 +60,7 @@ struct port_info *ports = NULL;
 struct core_status *cores = NULL;
 
 struct rte_mempool *pktmbuf_pool;
-struct rte_mempool *nf_pool[4];		//now we create 4 separate pools
+struct rte_mempool *nf_pool[3];		//now we create 4 separate pools
 struct rte_mempool *nf_info_pool;
 struct rte_mempool *nf_msg_pool;
 struct rte_ring *incoming_msg_queue;
@@ -273,14 +273,11 @@ init(int argc, char *argv[]) {
  */
 static int
 init_mbuf_pools(void) {
-        const unsigned num_mbufs = (MAX_NFS * MBUFS_PER_NF) \
-                        + (ports->num_ports * MBUFS_PER_PORT);
-
         /* don't pass single-producer/single-consumer flags to mbuf create as it
          * seems faster to use a cache instead */
         printf("Creating mbuf pool '%s' [%u mbufs] ...\n",
-                        PKTMBUF_POOL_NAME, num_mbufs);
-        pktmbuf_pool = rte_mempool_create(PKTMBUF_POOL_NAME, num_mbufs,
+                        PKTMBUF_POOL_NAME, NUM_MBUFS);
+        pktmbuf_pool = rte_mempool_create(PKTMBUF_POOL_NAME, NUM_MBUFS,
                         MBUF_SIZE, MBUF_CACHE_SIZE,
                         sizeof(struct rte_pktmbuf_pool_private), rte_pktmbuf_pool_init,
                         NULL, rte_pktmbuf_init, NULL, rte_socket_id(), NO_FLAGS);
@@ -473,18 +470,16 @@ init_nf_pools(void) {
 
  	char name[10];
 
- 	const unsigned num_mbufs = (MAX_NFS * MBUFS_PER_NF) \
-                        		+ (ports->num_ports * MBUFS_PER_PORT);
-	for (i = 0; i < 3; i++) {
+	for (i = 0; i < 2; i++) {
 		//nfs[i].instance_id = i;
 		sprintf(name, "pool-%d", i);
 		printf("Creating mbuf pool '%s' [%u mbufs] ...\n",
-                        name, num_mbufs);
+                        name, NUM_MBUFS);
 		//nfs[i].nf_pool = rte_mempool_create(name, num_mbufs,
 	        //                MBUF_SIZE, MBUF_CACHE_SIZE,
 	        //                sizeof(struct rte_pktmbuf_pool_private), rte_pktmbuf_pool_init,
 	        //                NULL, rte_pktmbuf_init, NULL, rte_socket_id(), NO_FLAGS);
-		nf_pool[i] = rte_mempool_create(name, num_mbufs,
+		nf_pool[i] = rte_mempool_create(name, NUM_MBUFS,
                                 MBUF_SIZE, MBUF_CACHE_SIZE,
                                 sizeof(struct rte_pktmbuf_pool_private), rte_pktmbuf_pool_init,
                                 NULL, rte_pktmbuf_init, NULL, rte_socket_id(), NO_FLAGS);
@@ -494,7 +489,7 @@ init_nf_pools(void) {
 	}
 
 	for (i = 0; i < MAX_NFS; i++) {		//assign NFs to memory pools (16 NFs, 4 pools)
-		j = i % 4;
+		j = i % 3;
 		nfs[i].nf_pool = nf_pool[j];
 	}
 	return 0;
