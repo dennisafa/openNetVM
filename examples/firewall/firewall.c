@@ -75,6 +75,11 @@
 static uint16_t destination;
 static int debug = 0;
 char *rule_file = NULL;
+static uint64_t pkts_drop = 0;
+static uint64_t pkts_forward = 0;
+static uint64_t pkts_total = 0;
+static uint32_t print_delay = 1000000;
+
 
 /* Struct that contains information about this NF */
 struct onvm_nf_info *nf_info;
@@ -112,7 +117,8 @@ parse_app_args(int argc, char *argv[], const char *progname) {
                         dst_flag = 1;
                         break;
                 case 'p':
-                        RTE_LOG(INFO, APP, "print_delay = %d\n", 0);
+                        print_delay = strtoul(optarg, NULL, 10);
+                        RTE_LOG(INFO, APP, "Print delay = %d\n", print_delay);
                         break;
 
                 case 'f':
@@ -121,7 +127,7 @@ parse_app_args(int argc, char *argv[], const char *progname) {
                         rules_init = 1;
                         break;
                 case 'b':
-                        RTE_LOG(INFO, APP, "Debug mode enabled; printing the source IP addresses of each incoming packet as well as drop/forward status\n");
+                        RTE_LOG(INFO, APP, "Debug mode enabled; printing total packets dropped/forwarded\n");
                         debug = 1;
                         break;
                 case '?':
@@ -164,6 +170,7 @@ packet_handler(struct rte_mbuf* pkt, struct onvm_pkt_meta* meta, __attribute__((
         struct ipv4_hdr* ipv4_hdr;
         uint32_t rule = 0;
         uint32_t track_ip = 0;
+        static uint32_t counter = 0;
 
         if(onvm_pkt_is_ipv4(pkt)){
                 ipv4_hdr = onvm_pkt_ipv4_hdr(pkt);
@@ -174,18 +181,14 @@ packet_handler(struct rte_mbuf* pkt, struct onvm_pkt_meta* meta, __attribute__((
                         case ONVM_NF_ACTION_TONF:
                                 meta->action = ONVM_NF_ACTION_TONF;
                                 meta->destination = destination;
-                                if (debug) {
-                                    RTE_LOG(INFO, APP, "Packet from source IP %d has been accepted.\n",
-                                            ipv4_hdr->src_addr);
-                                }
+                                pkts_forward++;
+                                pkts_total++;
                                 break;
                         default:
                                 // if we can't understand the rule, drop it
                                 meta->action = ONVM_NF_ACTION_DROP;
-                                if (debug) {
-                                    RTE_LOG(INFO, APP, "Packet from source IP %d has been dropped.\n",
-                                            ipv4_hdr->src_addr);
-                                }
+                                pkts_drop++;
+                                pkts_total++;
                                 break;
                         }
                 }
@@ -193,18 +196,24 @@ packet_handler(struct rte_mbuf* pkt, struct onvm_pkt_meta* meta, __attribute__((
                         // no matching rule
                         // default action is to drop packets
                         meta->action = ONVM_NF_ACTION_DROP;
-                        if (debug) {
-                            RTE_LOG(INFO, APP, "Packet from source IP %d has been dropped.\n", ipv4_hdr->src_addr);
-                        }
+                        pkts_drop++;
+                        pkts_total++;
                 }
         }
         else {
                 // drop all packets that aren't ipv4
-                if (debug) {
-                    RTE_LOG(INFO, APP, "Packet received not ipv4\n");
-                }
                 meta->action = ONVM_NF_ACTION_DROP;
+                pkts_drop++;
+                pkts_total++;
         }
+
+        if (++counter == print_delay && debug) {
+            printf("Packets received: %ld\n", pkts_total);
+            printf("Packets dropped: %ld\n", pkts_drop);
+            printf("Packets forwarded: %ld\n\n", pkts_forward);
+            counter = 0;
+        }
+
         return 0;
 }
 
