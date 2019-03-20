@@ -57,7 +57,7 @@
 #include "onvm_nflib.h"
 #include "onvm_pkt_helper.h"
 
-#define NF_TAG "basic_monitor"
+#define NF_TAG "payload_nf"
 
 /* Struct that contains information about this NF */
 struct onvm_nf_info *nf_info;
