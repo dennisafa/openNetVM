@@ -76,8 +76,10 @@ onvm_pkt_process_rx_batch(struct queue_mgr *rx_mgr, struct rte_mbuf *pkts[], uin
 //                        meta->action = onvm_sc_next_action(sc, pkts[i]);
 //                        meta->destination = onvm_sc_next_destination(sc, pkts[i]);
 //                } else {
-                        meta->action = onvm_sc_next_action(default_chain, pkts[i]);
-                        meta->destination = onvm_sc_next_destination(default_chain, pkts[i]);
+			meta->action = ONVM_NF_ACTION_TONF;
+			meta->destination = pkts[i]->port + 1;
+//                        meta->action = onvm_sc_next_action(default_chain, pkts[i]);
+//                        meta->destination = onvm_sc_next_destination(default_chain, pkts[i]);
 //                }
                 /* PERF: this might hurt performance since it will cause cache
                  * invalidations. Ideally the data modified by the NF manager

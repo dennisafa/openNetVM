@@ -60,7 +60,7 @@ struct port_info *ports = NULL;
 struct core_status *cores = NULL;
 
 struct rte_mempool *pktmbuf_pool;
-struct rte_mempool *nf_pool[3];		//now we create 4 separate pools
+struct rte_mempool *nf_pool[4];		//now we create 2 separate pools
 struct rte_mempool *nf_info_pool;
 struct rte_mempool *nf_msg_pool;
 struct rte_ring *incoming_msg_queue;
@@ -201,12 +201,6 @@ init(int argc, char *argv[]) {
         if (retval != 0)
                 rte_exit(EXIT_FAILURE, "Cannot create needed mbuf pools\n");
 
-        /*initialise the NF pools separately*/
-        retval = init_nf_pools();
-        if (retval != 0) {
-                rte_exit(EXIT_FAILURE, "Cannot create needed nf pools\n");
-        }
-
         /* initialise nf info pool */
         retval = init_nf_info_pool();
         if (retval != 0) {
@@ -217,6 +211,12 @@ init(int argc, char *argv[]) {
         retval = init_nf_msg_pool();
         if (retval != 0) {
                 rte_exit(EXIT_FAILURE, "Cannot create nf message pool: %s\n", rte_strerror(rte_errno));
+        }
+
+        /*initialise the NF pools separately*/
+        retval = init_nf_pools();
+        if (retval != 0) {
+                rte_exit(EXIT_FAILURE, "Cannot create needed nf pools\n");
         }
 
         /* now initialise the ports we will use */
@@ -382,9 +382,13 @@ init_port(uint8_t port_num) {
         rxq_conf.offloads = local_port_conf.rxmode.offloads;
         for (q = 0; q < rx_rings; q++) {
 		printf("setting up rx queue for port #%d\n", port_num);
-                retval = rte_eth_rx_queue_setup(port_num, q, rx_ring_size,
+//                retval = rte_eth_rx_queue_setup(port_num, q, rx_ring_size,
+//                                rte_eth_dev_socket_id(port_num),
+//                                &rxq_conf, pktmbuf_pool);
+		retval = rte_eth_rx_queue_setup(port_num, q, rx_ring_size,
                                 rte_eth_dev_socket_id(port_num),
-                                &rxq_conf, pktmbuf_pool);
+                                &rxq_conf, nf_pool[port_num]);
+
                 if (retval < 0) {
 			return retval;
 			printf("port #%d rx queue setup failed!!\n", port_num);
@@ -398,6 +402,7 @@ init_port(uint8_t port_num) {
                 retval = rte_eth_tx_queue_setup(port_num, q, tx_ring_size,
                                 rte_eth_dev_socket_id(port_num),
                                 &txq_conf);
+	
                 if (retval < 0) {
 			return retval;
 			printf("port #%d tx queue setup failed!!\n", port_num);
@@ -470,15 +475,11 @@ init_nf_pools(void) {
 
  	char name[10];
 
-	for (i = 0; i < 2; i++) {
+	for (i = 0; i < 4; i++) {
 		//nfs[i].instance_id = i;
 		sprintf(name, "pool-%d", i);
-		printf("Creating mbuf pool '%s' [%u mbufs] ...\n",
+		printf("Creating NF pool '%s' [%u mbufs] ...\n",
                         name, NUM_MBUFS);
-		//nfs[i].nf_pool = rte_mempool_create(name, num_mbufs,
-	        //                MBUF_SIZE, MBUF_CACHE_SIZE,
-	        //                sizeof(struct rte_pktmbuf_pool_private), rte_pktmbuf_pool_init,
-	        //                NULL, rte_pktmbuf_init, NULL, rte_socket_id(), NO_FLAGS);
 		nf_pool[i] = rte_mempool_create(name, NUM_MBUFS,
                                 MBUF_SIZE, MBUF_CACHE_SIZE,
                                 sizeof(struct rte_pktmbuf_pool_private), rte_pktmbuf_pool_init,
@@ -488,8 +489,8 @@ init_nf_pools(void) {
 			rte_exit(EXIT_FAILURE, "Cannot create mem pool for NF %u\n", i);
 	}
 
-	for (i = 0; i < MAX_NFS; i++) {		//assign NFs to memory pools (16 NFs, 4 pools)
-		j = i % 3;
+	for (i = 0; i < 4; i++) {		//assign NFs to memory pools (4 NFs, 4 pools)
+		j = i % 4;
 		nfs[i].nf_pool = nf_pool[j];
 	}
 	return 0;

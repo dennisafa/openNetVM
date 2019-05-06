@@ -170,8 +170,8 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
         }
 
         meta->action = ONVM_NF_ACTION_OUT;
-//        meta->destination = pkt->port;
-	meta->destination = 0;
+        meta->destination = pkt->port;
+//	meta->destination = 0;
 
         if (onvm_pkt_swap_src_mac_addr(pkt, meta->destination, ports) != 0) {
                 RTE_LOG(INFO, APP, "ERROR: Failed to swap src mac with dst mac!\n");
