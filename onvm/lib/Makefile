@@ -51,6 +51,7 @@ LIB    = libonvmhelper.a
 # all source are stored in SRCS-y
 SRCS-y := cJSON.c
 
-CFLAGS += $(WERROR_FLAGS) -O3 $(USER_FLAGS)
+# CFLAGS += $(WERROR_FLAGS) -O3 $(USER_FLAGS)
+CFLAGS += -O3 $(USER_FLAGS)
 
 include $(RTE_SDK)/mk/rte.extlib.mk

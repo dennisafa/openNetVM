@@ -52,7 +52,8 @@ SRCS-y := monitor.c
 # OpenNetVM path
 ONVM= $(SRCDIR)/../../onvm
 
-CFLAGS += $(WERROR_FLAGS) -O3 -g
+# CFLAGS += $(WERROR_FLAGS) -O3 -g
+CFLAGS += -O3 -g
 
 CFLAGS += -I$(ONVM)/onvm_nflib
 CFLAGS += -I$(ONVM)/lib
