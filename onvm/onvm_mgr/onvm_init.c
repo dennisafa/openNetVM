@@ -60,7 +60,7 @@ struct port_info *ports = NULL;
 struct core_status *cores = NULL;
 
 struct rte_mempool *pktmbuf_pool;
-struct rte_mempool *nf_pool[4];		//now we create 2 separate pools
+struct rte_mempool *nf_pool[6];		//now we create 2 separate pools
 struct rte_mempool *nf_info_pool;
 struct rte_mempool *nf_msg_pool;
 struct rte_ring *incoming_msg_queue;
@@ -475,7 +475,7 @@ init_nf_pools(void) {
 
  	char name[10];
 
-	for (i = 0; i < 4; i++) {
+	for (i = 0; i < 6; i++) {
 		//nfs[i].instance_id = i;
 		sprintf(name, "pool-%d", i);
 		printf("Creating NF pool '%s' [%u mbufs] ...\n",
@@ -489,8 +489,8 @@ init_nf_pools(void) {
 			rte_exit(EXIT_FAILURE, "Cannot create mem pool for NF %u\n", i);
 	}
 
-	for (i = 0; i < 4; i++) {		//assign NFs to memory pools (4 NFs, 4 pools)
-		j = i % 4;
+	for (i = 0; i < 6; i++) {		//assign NFs to memory pools (4 NFs, 4 pools)
+		j = i % 6;
 		nfs[i].nf_pool = nf_pool[j];
 	}
 	return 0;
