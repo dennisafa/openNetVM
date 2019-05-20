@@ -96,7 +96,7 @@ onvm_pkt_drop(struct rte_mbuf *pkt);
 
 void
 onvm_pkt_process_tx_batch(struct queue_mgr *tx_mgr, struct rte_mbuf *pkts[], uint16_t tx_count, struct onvm_nf *nf) {
-        uint16_t i;
+        uint16_t i, dst_instance_id;;
         struct onvm_pkt_meta *meta;
         struct packet_buf *out_buf;
 
@@ -123,7 +123,22 @@ onvm_pkt_process_tx_batch(struct queue_mgr *tx_mgr, struct rte_mbuf *pkts[], uin
                         nf->stats.act_tonf++;
 
 			/* Packet Copy Function*/
-			dst_nf = &nfs[meta->destination];
+			dst_instance_id = onvm_sc_service_to_nf_map(meta->destination, pkts[i]);
+			if (dst_instance_id == 0) {
+                		onvm_pkt_drop(pkts[i]);
+                		if (nf != NULL){
+                        		nf->stats.tx_drop++;
+                			return;
+				}
+        		}
+			dst_nf = &nfs[dst_instance_id];
+			if (!onvm_nf_is_valid(dst_nf)) {
+                		onvm_pkt_drop(pkts[i]);
+                		if (nf != NULL){
+                        		nf->stats.tx_drop++;
+                			return;
+				}
+        		}
 
 			if (dst_nf->nf_pool == nf->nf_pool){		//check if the NFs are sharing same pool (same tenant)
 				onvm_pkt_enqueue_nf(tx_mgr, meta->destination, pkts[i], nf);
