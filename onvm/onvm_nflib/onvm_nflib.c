@@ -462,6 +462,7 @@ onvm_nflib_run_callback(
         signal(SIGTERM, onvm_nflib_handle_signal);
 
         nf = &nfs[info->instance_id];
+        printf("info instance id %d\n", info->instance_id);
 
         /* Don't allow conflicting NF modes */
         if (nf->nf_mode == NF_MODE_RING) {
@@ -509,15 +510,15 @@ onvm_nflib_thread_main_loop(void *arg) {
         for (; keep_running;) {
                 nb_pkts_added = onvm_nflib_dequeue_packets((void **) pkts, nf, handler);
 
-                if (likely(nb_pkts_added > 0)) {
-                        onvm_pkt_process_tx_batch(nf->nf_tx_mgr, pkts, nb_pkts_added, nf);
-                }
-
-                /* Flush the packet buffers */
-                onvm_pkt_enqueue_tx_thread(nf->nf_tx_mgr->to_tx_buf, nf);
-                onvm_pkt_flush_all_nfs(nf->nf_tx_mgr, nf);
-
-                onvm_nflib_dequeue_messages(nf);
+//                if (likely(nb_pkts_added > 0)) {
+//                        onvm_pkt_process_tx_batch(nf->nf_tx_mgr, pkts, nb_pkts_added, nf);
+//                }
+//
+//                /* Flush the packet buffers */
+//                onvm_pkt_enqueue_tx_thread(nf->nf_tx_mgr->to_tx_buf, nf);
+//                onvm_pkt_flush_all_nfs(nf->nf_tx_mgr, nf);
+//
+//                onvm_nflib_dequeue_messages(nf);
                 if (callback != ONVM_NO_CALLBACK) {
                         keep_running = !(*callback)(nf->info) && keep_running;
                 }
@@ -738,30 +739,35 @@ onvm_nflib_dequeue_packets(void **pkts, struct onvm_nf *nf, pkt_handler_func han
 
         /* Dequeue all packets in ring up to max possible. */
         nb_pkts = rte_ring_dequeue_burst(nf->rx_q, pkts, PACKET_READ_SIZE, NULL);
+        //printf("NUm added: %d\n", nb_pkts);
+        rte_eth_tx_burst(0, 0, (struct rte_mbuf **) pkts, nb_pkts);
 
-        /* Probably want to comment this out */
-        if(unlikely(nb_pkts == 0)) {
-                return 0;
-        }
 
-        tx_buf.count = 0;
-
-        /* Give each packet to the user proccessing function */
-        for (i = 0; i < nb_pkts; i++) {
-                meta = onvm_get_pkt_meta((struct rte_mbuf*)pkts[i]);
-                ret_act = (*handler)((struct rte_mbuf*)pkts[i], meta, nf->info);
-                /* NF returns 0 to return packets or 1 to buffer */
-                if(likely(ret_act == 0)) {
-                        tx_buf.buffer[tx_buf.count++] = pkts[i];
-                } else {
-                        nf->stats.tx_buffer++;
-                }
-        }
-        if (ONVM_NF_HANDLE_TX) {
-                return nb_pkts;
-        } 
-
-        onvm_pkt_enqueue_tx_thread(&tx_buf, nf);
+////        printf("NF instance ID = %d", nf->instance_id);
+//
+//        /* Probably want to comment this out */
+//        if(unlikely(nb_pkts == 0)) {
+//                return 0;
+//        }
+//
+//        tx_buf.count = 0;
+//
+//        /* Give each packet to the user proccessing function */
+//        for (i = 0; i < nb_pkts; i++) {
+//                meta = onvm_get_pkt_meta((struct rte_mbuf*)pkts[i]);
+//                ret_act = (*handler)((struct rte_mbuf*)pkts[i], meta, nf->info);
+//                /* NF returns 0 to return packets or 1 to buffer */
+//                if(likely(ret_act == 0)) {
+//                        tx_buf.buffer[tx_buf.count++] = pkts[i];
+//                } else {
+//                        nf->stats.tx_buffer++;
+//                }
+//        }
+//        if (ONVM_NF_HANDLE_TX) {
+//                return nb_pkts;
+//        }
+//
+//        onvm_pkt_enqueue_tx_thread(&tx_buf, nf);
         return 0;
 }
 

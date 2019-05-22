@@ -64,6 +64,10 @@ struct onvm_nf_info *nf_info;
 /* number of package between each print */
 static uint32_t print_delay = 1000000;
 
+static uint8_t measure_latency = 0;
+static uint32_t latency_packets = 0;
+static uint64_t total_latency = 0;
+
 
 static uint32_t destination;
 
@@ -129,29 +133,33 @@ parse_app_args(int argc, char *argv[], const char *progname) {
  */
 static void
 do_stats_display(struct rte_mbuf* pkt) {
+        static uint64_t last_cycles;
+        static uint64_t cur_pkts = 0;
+        static uint64_t last_pkts = 0;
         const char clr[] = { 27, '[', '2', 'J', '\0' };
         const char topLeft[] = { 27, '[', '1', ';', '1', 'H', '\0' };
-        static uint64_t pkt_process = 0;
-        struct ipv4_hdr* ip;
 
-        pkt_process += print_delay;
+        uint64_t cur_cycles = rte_get_tsc_cycles();
+        cur_pkts += print_delay;
 
         /* Clear screen and move to top left */
         printf("%s%s", clr, topLeft);
 
-        printf("PACKETS\n");
-        printf("-----\n");
-        printf("Port : %d\n", pkt->port);
-        printf("Size : %d\n", pkt->pkt_len);
-        printf("N°   : %"PRIu64"\n", pkt_process);
-        printf("\n\n");
+        printf("Total packets: %9"PRIu64" \n", cur_pkts);
+        printf("TX pkts per second: %9"PRIu64" \n", (cur_pkts - last_pkts)
+                                                    * rte_get_timer_hz() / (cur_cycles - last_cycles));
+        if (measure_latency && latency_packets > 0)
+                printf("Avg latency nanoseconds: %6"PRIu64" \n", total_latency/(latency_packets)
+                                                                 * 1000000000 / rte_get_timer_hz());
 
-        ip = onvm_pkt_ipv4_hdr(pkt);
-        if (ip != NULL) {
-                onvm_pkt_print(pkt);
-        } else {
-                printf("No IP4 header found\n");
-        }
+        total_latency = 0;
+        latency_packets = 0;
+        pkt->port = 0;
+
+        last_pkts = cur_pkts;
+        last_cycles = cur_cycles;
+
+        printf("\n\n");
 }
 
 static int
@@ -162,14 +170,36 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
                 counter = 0;
         }
 
-        meta->action = ONVM_NF_ACTION_TONF;
-        meta->destination = destination;
+        meta->action = ONVM_NF_ACTION_OUT;
+        meta->destination = pkt->port;
         return 0;
 }
 
 
+void burst_port() {
+
+        struct rte_mbuf *pkts[PACKET_READ_SIZE];
+        struct onvm_nf * nf;
+        uint16_t tx_count, rx_count;
+        nf = &nfs[2];
+        //onvm_threading_core_affinitize(nf->info->core);
+
+        for (;;) {
+                rx_count = rte_ring_dequeue_burst(nf->rx_q, (void**) pkts, PACKET_READ_SIZE, NULL);
+                if (rx_count > 0) {
+                        printf("Oh hi mark\n");
+                }
+                tx_count = rte_eth_tx_burst(0, 0, (struct rte_mbuf **) pkts, rx_count);
+        }
+
+}
+
+
+
 int main(int argc, char *argv[]) {
         int arg_offset;
+        struct onvm_nf *nf;
+        struct packet_buf *nf_buf;
 
         const char *progname = argv[0];
 
@@ -182,6 +212,14 @@ int main(int argc, char *argv[]) {
                 onvm_nflib_stop(nf_info);
                 rte_exit(EXIT_FAILURE, "Invalid command-line arguments\n");
         }
+
+        printf("%d", nf_info->instance_id);
+
+
+        //burst_port();
+
+
+
 
         onvm_nflib_run(nf_info, &packet_handler);
         printf("If we reach here, program is ending\n");

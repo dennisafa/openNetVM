@@ -100,14 +100,14 @@ onvm_pkt_process_tx_batch(struct queue_mgr *tx_mgr, struct rte_mbuf *pkts[], uin
         struct onvm_pkt_meta *meta;
         struct packet_buf *out_buf;
 
-	struct onvm_nf *dst_nf;		//destination NF
-	struct rte_mbuf *pkts_clone[tx_count];  //mbuf to save copied packet
+        struct onvm_nf *dst_nf;        //destination NF
+        struct rte_mbuf *pkts_clone[tx_count];  //mbuf to save copied packet
 
         if (tx_mgr == NULL || pkts == NULL || nf == NULL)
                 return;
 
         for (i = 0; i < tx_count; i++) {
-                meta = (struct onvm_pkt_meta*) &(((struct rte_mbuf*)pkts[i])->udata64);
+                meta = (struct onvm_pkt_meta *) &(((struct rte_mbuf *) pkts[i])->udata64);
                 meta->src = nf->instance_id;
                 if (meta->action == ONVM_NF_ACTION_DROP) {
                         // if the packet is drop, then <return value> is 0
@@ -122,51 +122,52 @@ onvm_pkt_process_tx_batch(struct queue_mgr *tx_mgr, struct rte_mbuf *pkts[], uin
                 } else if (meta->action == ONVM_NF_ACTION_TONF) {
                         nf->stats.act_tonf++;
 
-			/* Packet Copy Function*/
-			dst_instance_id = onvm_sc_service_to_nf_map(meta->destination, pkts[i]);
-			if (dst_instance_id == 0) {
-                		onvm_pkt_drop(pkts[i]);
-                		if (nf != NULL){
-                        		nf->stats.tx_drop++;
-                			return;
-				}
-        		}
-			dst_nf = &nfs[dst_instance_id];
-			if (!onvm_nf_is_valid(dst_nf)) {
-                		onvm_pkt_drop(pkts[i]);
-                		if (nf != NULL){
-                        		nf->stats.tx_drop++;
-                			return;
-				}
-        		}
+                        /* Packet Copy Function*/
+                        dst_instance_id = onvm_sc_service_to_nf_map(meta->destination, pkts[i]);
+                        if (dst_instance_id == 0) {
+                                onvm_pkt_drop(pkts[i]);
+                                if (nf != NULL) {
+                                        nf->stats.tx_drop++;
+                                        return;
+                                }
+                        }
+                        dst_nf = &nfs[dst_instance_id];
+                        if (!onvm_nf_is_valid(dst_nf)) {
+                                onvm_pkt_drop(pkts[i]);
+                                if (nf != NULL) {
+                                        nf->stats.tx_drop++;
+                                        return;
+                                }
+                        }
 
-			if (dst_nf->nf_pool == nf->nf_pool){		//check if the NFs are sharing same pool (same tenant)
-				onvm_pkt_enqueue_nf(tx_mgr, meta->destination, pkts[i], nf);
-			}
-			else {
-				pkts_clone[i] = rte_pktmbuf_alloc(dst_nf->nf_pool);
-				if (pkts_clone[i] == NULL){
-	                        	printf("Packet allocation failed!!\n");
-	                                exit(-1);
-	                        }
+                        if (dst_nf->nf_pool ==
+                            nf->nf_pool) {        //check if the NFs are sharing same pool (same tenant)
+                                onvm_pkt_enqueue_nf(tx_mgr, meta->destination, pkts[i], nf);
+                        } else {
+                                pkts_clone[i] = rte_pktmbuf_alloc(dst_nf->nf_pool);
+                                if (pkts_clone[i] == NULL) {
+                                        printf("Packet allocation failed!!\n");
+                                        exit(-1);
+                                }
 
-	 			if (rte_pktmbuf_append(pkts_clone[i], pkts[i]->pkt_len) == NULL){
-	                        	printf("Append Failed!!!\n");
-	                                exit(-1);
-	                        }
+                                if (rte_pktmbuf_append(pkts_clone[i], pkts[i]->pkt_len) == NULL) {
+                                        printf("Append Failed!!!\n");
+                                        exit(-1);
+                                }
 
-	 			if (memcpy (rte_pktmbuf_mtod(pkts_clone[i], char *), rte_pktmbuf_mtod(pkts[i], char *), pkts[i]->pkt_len) == NULL){
-	                        	printf("Packet Data Copy  Failed!!!\n");
-	                       	}
+                                if (memcpy(rte_pktmbuf_mtod(pkts_clone[i], char *), rte_pktmbuf_mtod(pkts[i],
+                                char *), pkts[i]->pkt_len) == NULL){
+                                        printf("Packet Data Copy  Failed!!!\n");
+                                }
 
-	 			pkts_clone[i]->udata64 = pkts[i]->udata64;
-				pkts_clone[i]->port = pkts[i]->port;
-				/* End Packet Copy Function*/
+                                pkts_clone[i]->udata64 = pkts[i]->udata64;
+                                pkts_clone[i]->port = pkts[i]->port;
+                                /* End Packet Copy Function*/
 
-	                        //onvm_pkt_enqueue_nf(tx_mgr, meta->destination, pkts[i], nf);
-				onvm_pkt_enqueue_nf(tx_mgr, meta->destination, pkts_clone[i],nf);
-				onvm_pkt_drop(pkts[i]);		//drop original packet
-			}
+                                //onvm_pkt_enqueue_nf(tx_mgr, meta->destination, pkts[i], nf);
+                                onvm_pkt_enqueue_nf(tx_mgr, meta->destination, pkts_clone[i], nf);
+                                onvm_pkt_drop(pkts[i]);        //drop original packet
+                        }
 
                 } else if (meta->action == ONVM_NF_ACTION_OUT) {
                         nf->stats.act_out++;
@@ -217,13 +218,13 @@ onvm_pkt_flush_nf_queue(struct queue_mgr *tx_mgr, uint16_t nf_id, struct onvm_nf
         if (!onvm_nf_is_valid(nf))
                 return;
 
-        if (rte_ring_enqueue_bulk(nf->rx_q, (void **)nf_buf->buffer,
-                        nf_buf->count, NULL) == 0) {
+        if (rte_ring_enqueue_bulk(nf->rx_q, (void **) nf_buf->buffer,
+                                  nf_buf->count, NULL) == 0) {
                 for (i = 0; i < nf_buf->count; i++) {
                         onvm_pkt_drop(nf_buf->buffer[i]);
                 }
                 nf->stats.rx_drop += nf_buf->count;
-                if (source_nf != NULL) 
+                if (source_nf != NULL)
                         source_nf->stats.tx_drop += nf_buf->count;
         } else {
                 nf->stats.rx += nf_buf->count;
@@ -234,10 +235,13 @@ onvm_pkt_flush_nf_queue(struct queue_mgr *tx_mgr, uint16_t nf_id, struct onvm_nf
 }
 
 void
-onvm_pkt_enqueue_nf(struct queue_mgr *tx_mgr, uint16_t dst_service_id, struct rte_mbuf *pkt, struct onvm_nf *source_nf) {
+onvm_pkt_enqueue_nf(struct queue_mgr *tx_mgr, uint16_t dst_service_id, struct rte_mbuf *pkt,
+                    struct onvm_nf *source_nf) {
         struct onvm_nf *nf;
         uint16_t dst_instance_id;
         struct packet_buf *nf_buf;
+
+       // printf("NF isn't running\n");
 
 
         if (tx_mgr == NULL || pkt == NULL)
@@ -297,14 +301,15 @@ onvm_pkt_flush_port_queue(struct queue_mgr *tx_mgr, uint16_t port) {
         port_buf->count = 0;
 }
 
-void 
+void
 onvm_pkt_enqueue_tx_thread(struct packet_buf *pkt_buf, struct onvm_nf *nf) {
         uint16_t i;
 
         if (pkt_buf->count == 0)
                 return;
 
-        if (unlikely(pkt_buf->count > 0 && rte_ring_enqueue_bulk(nf->tx_q, (void **)pkt_buf->buffer, pkt_buf->count, NULL) == 0)) {
+        if (unlikely(pkt_buf->count > 0 &&
+                     rte_ring_enqueue_bulk(nf->tx_q, (void **) pkt_buf->buffer, pkt_buf->count, NULL) == 0)) {
                 nf->stats.tx_drop += pkt_buf->count;
                 for (i = 0; i < pkt_buf->count; i++) {
                         rte_pktmbuf_free(pkt_buf->buffer[i]);
