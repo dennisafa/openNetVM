@@ -87,8 +87,6 @@ static uint32_t destination;
 
 const char *conf;
 
-void * RunNFServer(void);
-
 /*
  * Print a usage message
  */
@@ -192,22 +190,6 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
         return 0;
 }
 
-
-void *
-RunNFServer(void) {
-
-        struct thread_context *ctx;
-        mctx_t mctx;
-        int listener;
-        int ep;
-
-        for (;;) {
-                
-        }
-
-        return NULL;
-}
-
 int
 main(int argc, char *argv[]) {
         int arg_offset;
@@ -224,7 +206,9 @@ main(int argc, char *argv[]) {
                 rte_exit(EXIT_FAILURE, "Invalid command-line arguments\n");
         }
 
-        RunNFServer();
+        mtcp_init(conf);
+
+        mtcp_core_affinitize(nf_info->core);
 
 
 

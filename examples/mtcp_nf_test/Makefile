@@ -44,7 +44,7 @@ RTE_TARGET ?= x86_64-native-linuxapp-gcc
 include $(RTE_SDK)/mk/rte.vars.mk
 
 # binary name
-APP = simple_forward
+APP = mtcp_nf_test
 
 # all source are stored in SRCS-y
 SRCS-y := forward.c
@@ -52,7 +52,7 @@ SRCS-y := forward.c
 # OpenNetVM path
 ONVM= $(SRCDIR)/../../onvm
 
-CFLAGS += $(WERROR_FLAGS) -O3 $(USER_FLAGS) -Wno-strict-prototypes -Wno-unused-function -Wno-unused-variable -I/local/onvm/mtcp/mtcp/lib/ -I/local/onvm/mtcp/mtcp/src/include/ -DMULTI_THREADED
+CFLAGS += $(WERROR_FLAGS) -O3 $(USER_FLAGS) -Wno-strict-prototypes -Wno-unused-function -I/local/onvm/mtcp/mtcp/lib/ -I/local/onvm/mtcp/mtcp/src/include/ -DMULTI_THREADED
 
 CFLAGS += -I$(ONVM)/onvm_nflib
 CFLAGS += -I$(ONVM)/lib
