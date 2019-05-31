@@ -55,6 +55,7 @@
 
 #include "onvm_nflib.h"
 #include "onvm_pkt_helper.h"
+#include "onvm_mtcp_common.h"
 
 #define NF_TAG "webserver"
 
@@ -65,24 +66,28 @@ struct onvm_nf *nf;
 
 struct onvm_nf_msg *msg;
 
-/* number of package between each print */
-static uint32_t print_delay = 1000000;
+static int keep_running = 1;
+
+///* number of package between each print */
+//static uint32_t print_delay = 1000000;
 
 
-static uint32_t destination;
+void read_msg(struct onvm_nf *nf);
+
+
 
 /*
  * Print a usage message
  */
-static void
-usage(const char *progname) {
-        printf("Usage:\n");
-        printf("%s [EAL args] -- [NF_LIB args] -- -d <destination> -p <print_delay>\n", progname);
-        printf("%s -F <CONFIG_FILE.json> [EAL args] -- [NF_LIB args] -- [NF args]\n\n", progname);
-        printf("Flags:\n");
-        printf(" - `-d <dst>`: destination service ID to foward to\n");
-        printf(" - `-p <print_delay>`: number of packets between each print, e.g. `-p 1` prints every packets.\n");
-}
+//static void
+//usage(const char *progname) {
+//        printf("Usage:\n");
+//        printf("%s [EAL args] -- [NF_LIB args] -- -d <destination> -p <print_delay>\n", progname);
+//        printf("%s -F <CONFIG_FILE.json> [EAL args] -- [NF_LIB args] -- [NF args]\n\n", progname);
+//        printf("Flags:\n");
+//        printf(" - `-d <dst>`: destination service ID to foward to\n");
+//        printf(" - `-p <print_delay>`: number of packets between each print, e.g. `-p 1` prints every packets.\n");
+//}
 
 /*
  * Parse the application arguments.
@@ -131,92 +136,80 @@ usage(const char *progname) {
  * thread in the server process, when the process is run with more
  * than one lcore enabled.
  */
-static void
-do_stats_display(struct rte_mbuf* pkt) {
-        const char clr[] = { 27, '[', '2', 'J', '\0' };
-        const char topLeft[] = { 27, '[', '1', ';', '1', 'H', '\0' };
-        static uint64_t pkt_process = 0;
-        struct ipv4_hdr* ip;
+//static void
+//do_stats_display(struct rte_mbuf* pkt) {
+//        const char clr[] = { 27, '[', '2', 'J', '\0' };
+//        const char topLeft[] = { 27, '[', '1', ';', '1', 'H', '\0' };
+//        static uint64_t pkt_process = 0;
+//        struct ipv4_hdr* ip;
+//
+//        pkt_process += print_delay;
+//
+//        /* Clear screen and move to top left */
+//        printf("%s%s", clr, topLeft);
+//
+//        printf("PACKETS\n");
+//        printf("-----\n");
+//        printf("Port : %d\n", pkt->port);
+//        printf("Size : %d\n", pkt->pkt_len);
+//        printf("N°   : %"PRIu64"\n", pkt_process);
+//        printf("\n\n");
+//
+//        ip = onvm_pkt_ipv4_hdr(pkt);
+//        if (ip != NULL) {
+//                onvm_pkt_print(pkt);
+//        } else {
+//                printf("No IP4 header found\n");
+//        }
+//}
 
-        pkt_process += print_delay;
-
-        /* Clear screen and move to top left */
-        printf("%s%s", clr, topLeft);
-
-        printf("PACKETS\n");
-        printf("-----\n");
-        printf("Port : %d\n", pkt->port);
-        printf("Size : %d\n", pkt->pkt_len);
-        printf("N°   : %"PRIu64"\n", pkt_process);
-        printf("\n\n");
-
-        ip = onvm_pkt_ipv4_hdr(pkt);
-        if (ip != NULL) {
-                onvm_pkt_print(pkt);
-        } else {
-                printf("No IP4 header found\n");
-        }
-}
-
-static int
-packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((unused)) struct onvm_nf_info *nf_info) {
-        static uint32_t counter = 0;
-        if (++counter == print_delay) {
-                do_stats_display(pkt);
-                counter = 0;
-        }
-
-        meta->action = ONVM_NF_ACTION_TONF;
-        meta->destination = destination;
-        return 0;
-}
+//static int
+//packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((unused)) struct onvm_nf_info *nf_info) {
+//        static uint32_t counter = 0;
+//        if (++counter == print_delay) {
+//                do_stats_display(pkt);
+//                counter = 0;
+//        }
+//
+//        meta->action = ONVM_NF_ACTION_TONF;
+//        meta->destination = destination;
+//        return 0;
+//}
 
 void
 read_msg(struct onvm_nf *nf) {
+        printf("Running read_msg func on instance ID %d\n", nf->instance_id);
         struct rte_ring *msg_q;
         msg_q = nf->msg_q;
 
-        for (;;) {
+        while (keep_running) {
                 if (likely(rte_ring_count(msg_q) > 0)) {
-                        rte_ring_dequeue(msg_q, (void **)(&msg))
-
+                        rte_ring_dequeue(msg_q, (void **)(&msg));
                 }
         }
-
-
-
-
-
-
-        onvm_nflib_cleanup(nf_info);
-
 }
 
 
-void
-handle_message() {
-
-
-
-}
+//void
+//handle_message() {
+//
+//
+//
+//}
 
 int main(int argc, char *argv[]) {
-        int arg_offset;
+        //int arg_offset;
 
-        const char *progname = argv[0];
+        //const char *progname = argv[0];
 
-        if ((arg_offset = onvm_nflib_init(argc, argv, NF_TAG, &nf_info)) < 0)
-                return -1;
-        argc -= arg_offset;
-        argv += arg_offset;
+        printf("Starting....\n");
 
-        if (parse_app_args(argc, argv, progname) < 0) {
-                onvm_nflib_stop(nf_info);
-                rte_exit(EXIT_FAILURE, "Invalid command-line arguments\n");
-        }
+        onvm_nflib_init(argc, argv, NF_TAG, &nf_info);
         nf = &nfs[nf_info->instance_id];
 
         onvm_threading_core_affinitize(nf->instance_id);
+
+        printf("Scanning for messages\n");
         read_msg(nf);
 
         //onvm_nflib_run(nf_info, &packet_handler);
