@@ -270,6 +270,8 @@ struct onvm_nf {
         uint8_t status;
         /* Deprecated, will be removed in the future advanced rings rework */
         uint8_t nf_mode;
+        uint8_t nf_mtcp;
+
         char *tag;
         /* Pointer to NF defined state data */
         void *data;

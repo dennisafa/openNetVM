@@ -55,8 +55,12 @@
 
 #include "onvm_nflib.h"
 #include "onvm_pkt_helper.h"
+#include "onvm_mtcp_common.h"
 
-#define NF_TAG "simple_forward"
+#define NF_TAG "webserver"
+
+/* MTCP NF */
+#define MTCP_MODE
 
 /* number of package between each print */
 static uint32_t print_delay = 1000000;
@@ -83,7 +87,7 @@ static int
 parse_app_args(int argc, char *argv[], const char *progname) {
         int c, dst_flag = 0;
 
-        while ((c = getopt(argc, argv, "d:p:")) != -1) {
+        while ((c = getopt(argc, argv, "d:p:m")) != -1) {
                 switch (c) {
                         case 'd':
                                 destination = strtoul(optarg, NULL, 10);
@@ -151,8 +155,7 @@ do_stats_display(struct rte_mbuf *pkt) {
 }
 
 static int
-packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
-               __attribute__((unused)) struct onvm_nf_local_ctx *nf_local_ctx) {
+msg_handler(struct onvm_nf_msg *msg, struct onvm_nf_local_ctx *nf_local_ctx;) {
         static uint32_t counter = 0;
         if (++counter == print_delay) {
                 do_stats_display(pkt);
@@ -176,7 +179,7 @@ main(int argc, char *argv[]) {
         onvm_nflib_start_signal_handler(nf_local_ctx, NULL);
 
         nf_function_table = onvm_nflib_init_nf_function_table();
-        nf_function_table->pkt_handler = &packet_handler;
+        nf_function_table->msg_handler = &msg_handler;
 
         if ((arg_offset = onvm_nflib_init(argc, argv, NF_TAG, nf_local_ctx, nf_function_table)) < 0) {
                 onvm_nflib_stop(nf_local_ctx);
@@ -196,7 +199,9 @@ main(int argc, char *argv[]) {
                 rte_exit(EXIT_FAILURE, "Invalid command-line arguments\n");
         }
 
+#ifdef MTCP_MODE
         nf_local_ctx->nf->nf_mode = 3;
+#endif
 
         onvm_nflib_run(nf_local_ctx);
 

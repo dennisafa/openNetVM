@@ -180,6 +180,10 @@ onvm_nflib_nf_ready(struct onvm_nf *nf);
 int
 onvm_nflib_handle_msg(struct onvm_nf_msg *msg, struct onvm_nf_local_ctx *nf_local_ctx);
 
+
+int
+onvm_nflib_handle_epoll_msg(struct onvm_nf_msg *msg, struct onvm_nf_local_ctx *nf_local_ctx);
+
 int
 onvm_nflib_send_msg_to_nf(uint16_t dest_nf, void *msg_data);
 

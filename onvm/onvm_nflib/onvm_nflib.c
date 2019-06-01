@@ -61,6 +61,7 @@
 #include "onvm_includes.h"
 #include "onvm_nflib.h"
 #include "onvm_sc_common.h"
+#include "onvm_mtcp_common.h"
 
 /**********************************Macros*************************************/
 
@@ -68,6 +69,7 @@
 #define NF_MODE_UNKNOWN 0
 #define NF_MODE_SINGLE 1
 #define NF_MODE_RING 2
+#define NF_ENABLE_MTCP 3
 
 #define ONVM_NO_CALLBACK NULL
 
@@ -247,6 +249,10 @@ onvm_nflib_thread_main_loop(void *arg);
  *
  * Input  : Number of NF instances
  */
+
+void *
+onvm_nflib_thread_mtcp_loop(void *arg);
+
 static void
 init_shared_cpu_info(uint16_t instance_id);
 
@@ -406,6 +412,7 @@ int
 onvm_nflib_run(struct onvm_nf_local_ctx *nf_local_ctx) {
         struct onvm_nf *nf;
         int ret;
+        pthread_t main_loop_thread;
 
         nf = nf_local_ctx->nf;
 
@@ -413,17 +420,61 @@ onvm_nflib_run(struct onvm_nf_local_ctx *nf_local_ctx) {
         if (nf->nf_mode == NF_MODE_RING) {
                 return -1;
         }
-        nf->nf_mode = NF_MODE_SINGLE;
 
-        pthread_t main_loop_thread;
-        if ((ret = pthread_create(&main_loop_thread, NULL, onvm_nflib_thread_main_loop, (void *)nf_local_ctx)) < 0) {
-                rte_exit(EXIT_FAILURE, "Failed to spawn main loop thread, error %d", ret);
-        }
-        if ((ret = pthread_join(main_loop_thread, NULL)) < 0) {
-                rte_exit(EXIT_FAILURE, "Failed to join with main loop thread, error %d", ret);
+        if (nf->nf_mode == NF_ENABLE_MTCP) {
+                printf("Running in mTCP mode\n");
+                if ((ret = pthread_create(&main_loop_thread, NULL, onvm_nflib_thread_mtcp_loop, (void *)nf_local_ctx)) < 0) {
+                        rte_exit(EXIT_FAILURE, "Failed to spawn mTCP loop thread, error %d", ret);
+                }
+
+                if ((ret = pthread_join(main_loop_thread, NULL)) < 0) {
+                        rte_exit(EXIT_FAILURE, "Failed to join with mTCP loop thread, error %d", ret);
+                }
+        } else {
+                printf("Running in normal mode\n");
+
+                if ((ret = pthread_create(&main_loop_thread, NULL, onvm_nflib_thread_main_loop,
+                                          (void *) nf_local_ctx)) < 0) {
+                        rte_exit(EXIT_FAILURE, "Failed to spawn main loop thread, error %d", ret);
+                }
+                if ((ret = pthread_join(main_loop_thread, NULL)) < 0) {
+                        rte_exit(EXIT_FAILURE, "Failed to join with main loop thread, error %d", ret);
+                }
         }
 
         return 0;
+}
+
+void *
+onvm_nflib_thread_mtcp_loop(void *arg) {
+
+        struct onvm_nf_local_ctx *nf_local_ctx;
+        struct onvm_nf *nf;
+        int ret;
+
+        nf_local_ctx = (struct onvm_nf_local_ctx *)arg;
+        nf = nf_local_ctx->nf;
+        onvm_threading_core_affinitize(nf->thread_info.core);
+
+        printf("Sending NF_READY message to manager...\n");
+        printf("Running in mTCP mode, polling messages on nf->msg_q\n");
+        ret = onvm_nflib_nf_ready(nf);
+        if (ret != 0)
+                rte_exit(EXIT_FAILURE, "Unable to message manager\n");
+
+
+        for (;rte_atomic16_read(&nf_local_ctx->keep_running) && rte_atomic16_read(&main_nf_local_ctx->keep_running);) {
+
+                // Send message to the NF
+                onvm_nflib_dequeue_messages(nf_local_ctx);
+        }
+
+        return NULL;
+
+
+
+        // STOP
+
 }
 
 void *
@@ -440,6 +491,8 @@ onvm_nflib_thread_main_loop(void *arg) {
         onvm_threading_core_affinitize(nf->thread_info.core);
 
         printf("Sending NF_READY message to manager...\n");
+        printf("Running in mTCP mode, polling messages on nf->msg_q WRONG\n");
+
         ret = onvm_nflib_nf_ready(nf);
         if (ret != 0)
                 rte_exit(EXIT_FAILURE, "Unable to message manager\n");
@@ -533,6 +586,31 @@ onvm_nflib_nf_ready(struct onvm_nf *nf) {
 
 int
 onvm_nflib_handle_msg(struct onvm_nf_msg *msg, struct onvm_nf_local_ctx *nf_local_ctx) {
+        switch (msg->msg_type) {
+                case MSG_STOP:
+                        RTE_LOG(INFO, APP, "Shutting down...\n");
+                        rte_atomic16_set(&nf_local_ctx->keep_running, 0);
+                        break;
+                case MSG_SCALE:
+                        RTE_LOG(INFO, APP, "Received scale message...\n");
+                        onvm_nflib_scale((struct onvm_nf_scale_info*)msg->msg_data);
+                        break;
+                case MSG_FROM_NF:
+                        RTE_LOG(INFO, APP, "Recieved MSG from other NF");
+                        if (nf_local_ctx->nf->function_table->msg_handler != NULL) {
+                                nf_local_ctx->nf->function_table->msg_handler(msg->msg_data, nf_local_ctx);
+                        }
+                        break;
+                case MSG_NOOP:
+                default:
+                        break;
+        }
+
+        return 0;
+}
+
+int
+onvm_nflib_handle_epoll_msg(struct onvm_nf_msg *msg, struct onvm_nf_local_ctx *nf_local_ctx) {
         switch (msg->msg_type) {
                 case MSG_STOP:
                         RTE_LOG(INFO, APP, "Shutting down...\n");
@@ -959,8 +1037,10 @@ static inline void
 onvm_nflib_dequeue_messages(struct onvm_nf_local_ctx *nf_local_ctx) {
         struct onvm_nf_msg *msg;
         struct rte_ring *msg_q;
+        struct onvm_nf *nf;
 
-        msg_q = nf_local_ctx->nf->msg_q;
+        nf = nf_local_ctx->nf;
+        msg_q = nf->msg_q;
 
         // Check and see if this NF has any messages from the manager
         if (likely(rte_ring_count(msg_q) == 0)) {
@@ -968,7 +1048,13 @@ onvm_nflib_dequeue_messages(struct onvm_nf_local_ctx *nf_local_ctx) {
         }
         msg = NULL;
         rte_ring_dequeue(msg_q, (void **)(&msg));
-        onvm_nflib_handle_msg(msg, nf_local_ctx);
+        if (nf_local_ctx->nf->nf_mode == NF_ENABLE_MTCP) {
+                nf_msg_handler_fn handler = nf_local_ctx->nf->function_table->msg_handler;
+                ret_act = (*handler)(msg);
+        }
+        else {
+                onvm_nflib_handle_msg(msg, nf_local_ctx);
+        }
         rte_mempool_put(nf_msg_pool, (void *)msg);
 }
 
