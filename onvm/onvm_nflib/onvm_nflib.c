@@ -993,10 +993,10 @@ onvm_nflib_dequeue_messages(struct onvm_nf_local_ctx *nf_local_ctx) {
         struct onvm_nf_msg *msg;
         struct rte_ring *msg_q;
         struct onvm_nf *nf;
-        nf_msg_handler_fn  msg_handler;
+        //nf_msg_handler_fn  msg_handler;
 
         nf = nf_local_ctx->nf;
-        msg_handler = nf->function_table->msg_handler;
+        //msg_handler = nf->function_table->msg_handler;
         msg_q = nf->msg_q;
 
         // Check and see if this NF has any messages from the manager
@@ -1006,7 +1006,6 @@ onvm_nflib_dequeue_messages(struct onvm_nf_local_ctx *nf_local_ctx) {
         msg = NULL;
         rte_ring_dequeue(msg_q, (void **) (&msg));
         onvm_nflib_handle_msg(msg, nf_local_ctx);
-        (*msg_handler)((void *) msg, nf_local_ctx);
         rte_mempool_put(nf_msg_pool, (void *) msg);
 }
 

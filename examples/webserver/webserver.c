@@ -58,10 +58,9 @@
 #include "onvm_nflib.h"
 #include "onvm_pkt_helper.h"
 #include "onvm_common.h"
-#include "onvm_mtcp_common.h"
 
+#include "mtcp_epoll.h"
 #include "mtcp_api.h"
-#include "http_parsing.h"
 
 #define NF_TAG "webserver"
 #define MIN(a,b) (((a)<(b))?(a):(b))
@@ -69,7 +68,7 @@
 const char *www_main;
 DIR *dir;
 
-static int read_file (void *msg);
+static int read_file (char *filename);
 
 /*
  * Print a usage message
@@ -132,16 +131,25 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
 
 static void
 msg_handler(void *msg, struct onvm_nf_local_ctx *nf_local_ctx) {
-        struct onvm_nf_msg *rec_msg;
-        rec_msg = (struct onvm_nf_msg *) msg;
+        struct nf_files *files;
+        struct mtcp_epoll_event *even;
+        char *filename;
+        struct server_vars *serv;
 
-        switch (rec_msg->msg_mtcp) {
+        files = (struct nf_files *) msg;
+        even = files->ev;
+        serv = files->sv;
+        filename = serv->fname;
+
+        if (even == NULL || serv == NULL || filename == NULL) {
+                printf("Invalid mTCP message\n");
+                return;
+        }
+
+        switch (even->events) {
                 case MTCP_EPOLLIN:
-                        read_file((void *)rec_msg->msg_data);
+                        read_file(filename);
 
-                        // Enqueue response onto master NF's message ring
-
-                        // Get file name, store in buffer, send back to main mTCP nf
                 case MTCP_EPOLLOUT:
                 default:
                         printf("Unknown mTCP message\n");
@@ -150,9 +158,8 @@ msg_handler(void *msg, struct onvm_nf_local_ctx *nf_local_ctx) {
 }
 
 static int
-read_file (void *msg) {
-
-
+read_file (char *filename) {
+        printf("%s\n", filename);
         return 0;
 
 }
