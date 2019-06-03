@@ -20,6 +20,11 @@
 #define MTCP_EPOLLONESHOT   (1 << 30)
 #define MTCP_EPOLLET        (1 << 31)
 
+#define HTTP_HEADER_LEN 1024
+#define NAME_LIMIT 256
+
+typedef struct mtcp_context *mctx_t;
+
 typedef union mtcp_epoll_data {
         void *ptr;
         int sockid;
@@ -30,6 +35,28 @@ typedef union mtcp_epoll_data {
 struct mtcp_epoll_event {
         uint32_t events;
         mtcp_epoll_data_t data;
+};
+
+struct server_vars
+{
+        char request[HTTP_HEADER_LEN];
+        int recv_len;
+        int request_len;
+        long int total_read, total_sent;
+        uint8_t done;
+        uint8_t rspheader_sent;
+        uint8_t keep_alive;
+
+        int fidx;						// file cache index
+        char fname[NAME_LIMIT];				// file name
+        long int fsize;					// file size
+};
+
+struct thread_context
+{
+        mctx_t mctx;
+        int ep;
+        struct server_vars *svars;
 };
 
 

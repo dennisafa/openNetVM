@@ -48,6 +48,8 @@
 #include <string.h>
 #include <sys/queue.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <dirent.h>
 
 #include <rte_common.h>
 #include <rte_ip.h>
@@ -55,17 +57,19 @@
 
 #include "onvm_nflib.h"
 #include "onvm_pkt_helper.h"
+#include "onvm_common.h"
 #include "onvm_mtcp_common.h"
 
+#include "mtcp_api.h"
+#include "http_parsing.h"
+
 #define NF_TAG "webserver"
+#define MIN(a,b) (((a)<(b))?(a):(b))
 
-/* MTCP NF */
-#define MTCP_MODE
+const char *www_main;
+DIR *dir;
 
-/* number of package between each print */
-static uint32_t print_delay = 1000000;
-
-static uint32_t destination;
+static int read_file (void *msg);
 
 /*
  * Print a usage message
@@ -85,22 +89,20 @@ usage(const char *progname) {
  */
 static int
 parse_app_args(int argc, char *argv[], const char *progname) {
-        int c, dst_flag = 0;
+        int c, dir_flag = 0;
 
-        while ((c = getopt(argc, argv, "d:p:m")) != -1) {
+        while ((c = getopt(argc, argv, "p:")) != -1) {
                 switch (c) {
-                        case 'd':
-                                destination = strtoul(optarg, NULL, 10);
-                                dst_flag = 1;
-                                break;
                         case 'p':
-                                print_delay = strtoul(optarg, NULL, 10);
+                                www_main = optarg;
+                                dir = opendir(www_main);
+                                if (!dir) {
+                                        dir_flag = 1;
+                                }
                                 break;
                         case '?':
                                 usage(progname);
-                                if (optopt == 'd')
-                                        RTE_LOG(INFO, APP, "Option -%c requires an argument.\n", optopt);
-                                else if (optopt == 'p')
+                                if (optopt == 'p')
                                         RTE_LOG(INFO, APP, "Option -%c requires an argument.\n", optopt);
                                 else if (isprint(optopt))
                                         RTE_LOG(INFO, APP, "Unknown option `-%c'.\n", optopt);
@@ -113,58 +115,46 @@ parse_app_args(int argc, char *argv[], const char *progname) {
                 }
         }
 
-        if (!dst_flag) {
-                RTE_LOG(INFO, APP, "Simple Forward NF requires destination flag -d.\n");
+        if (!dir_flag) {
+                RTE_LOG(INFO, APP, "Directory must be specified\n");
                 return -1;
         }
 
         return optind;
 }
 
-/*
- * This function displays stats. It uses ANSI terminal codes to clear
- * screen when called. It is called from a single non-master
- * thread in the server process, when the process is run with more
- * than one lcore enabled.
- */
+static int
+packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
+               __attribute__((unused)) struct onvm_nf_local_ctx *nf_local_ctx) {
+        meta->action = ONVM_NF_ACTION_DROP;
+        return 0;
+}
+
 static void
-do_stats_display(struct rte_mbuf *pkt) {
-        const char clr[] = {27, '[', '2', 'J', '\0'};
-        const char topLeft[] = {27, '[', '1', ';', '1', 'H', '\0'};
-        static uint64_t pkt_process = 0;
-        struct ipv4_hdr *ip;
+msg_handler(void *msg, struct onvm_nf_local_ctx *nf_local_ctx) {
+        struct onvm_nf_msg *rec_msg;
+        rec_msg = (struct onvm_nf_msg *) msg;
 
-        pkt_process += print_delay;
+        switch (rec_msg->msg_mtcp) {
+                case MTCP_EPOLLIN:
+                        read_file((void *)rec_msg->msg_data);
 
-        /* Clear screen and move to top left */
-        printf("%s%s", clr, topLeft);
+                        // Enqueue response onto master NF's message ring
 
-        printf("PACKETS\n");
-        printf("-----\n");
-        printf("Port : %d\n", pkt->port);
-        printf("Size : %d\n", pkt->pkt_len);
-        printf("N°   : %" PRIu64 "\n", pkt_process);
-        printf("\n\n");
-
-        ip = onvm_pkt_ipv4_hdr(pkt);
-        if (ip != NULL) {
-                onvm_pkt_print(pkt);
-        } else {
-                printf("No IP4 header found\n");
+                        // Get file name, store in buffer, send back to main mTCP nf
+                case MTCP_EPOLLOUT:
+                default:
+                        printf("Unknown mTCP message\n");
+                        break;
         }
 }
 
 static int
-msg_handler(struct onvm_nf_msg *msg, struct onvm_nf_local_ctx *nf_local_ctx;) {
-        static uint32_t counter = 0;
-        if (++counter == print_delay) {
-                do_stats_display(pkt);
-                counter = 0;
-        }
+read_file (void *msg) {
 
-        meta->action = ONVM_NF_ACTION_TONF;
-        meta->destination = destination;
+
         return 0;
+
 }
 
 int
@@ -180,6 +170,7 @@ main(int argc, char *argv[]) {
 
         nf_function_table = onvm_nflib_init_nf_function_table();
         nf_function_table->msg_handler = &msg_handler;
+        nf_function_table->pkt_handler = &packet_handler;
 
         if ((arg_offset = onvm_nflib_init(argc, argv, NF_TAG, nf_local_ctx, nf_function_table)) < 0) {
                 onvm_nflib_stop(nf_local_ctx);
@@ -198,10 +189,6 @@ main(int argc, char *argv[]) {
                 onvm_nflib_stop(nf_local_ctx);
                 rte_exit(EXIT_FAILURE, "Invalid command-line arguments\n");
         }
-
-#ifdef MTCP_MODE
-        nf_local_ctx->nf->nf_mode = 3;
-#endif
 
         onvm_nflib_run(nf_local_ctx);
 

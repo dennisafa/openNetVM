@@ -1,4 +1,4 @@
-#                    openNetVM
+#                   openNetVM
 #      https://github.com/sdnfv/openNetVM
 #
 # BSD LICENSE
@@ -52,12 +52,13 @@ SRCS-y := webserver.c
 # OpenNetVM path
 ONVM= $(SRCDIR)/../../onvm
 
-CFLAGS += $(WERROR_FLAGS) -O3 $(USER_FLAGS)
+CFLAGS += $(WERROR_FLAGS) -O3 $(USER_FLAGS) -Wno-unused-parameter -Wno-strict-prototypes
 
-CFLAGS += -I$(ONVM)/onvm_nflib
+CFLAGS += -I$(ONVM)/onvm_nflib -I/local/onvm/mtcp/mtcp/include -I/local/onvm/mtcp/mtcp/src -I/local/onvm/mtcp/util/include
 CFLAGS += -I$(ONVM)/lib
 LDFLAGS += $(ONVM)/onvm_nflib/$(RTE_TARGET)/libonvm.a
 LDFLAGS += $(ONVM)/lib/$(RTE_TARGET)/lib/libonvmhelper.a -lm
+LDFLAGS += /local/onvm/mtcp/mtcp/lib/libmtcp.a -lgmp
 
 # workaround for a gcc bug with noreturn attribute
 # http://gcc.gnu.org/bugzilla/show_bug.cgi?id=12603

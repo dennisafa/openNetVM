@@ -56,7 +56,9 @@
 
 struct onvm_nf_msg {
         uint8_t msg_type; /* Constant saying what type of message is */
+        uint8_t msg_mtcp;
         void *msg_data;   /* These should be rte_malloc'd so they're stored in hugepages */
+        void *ctx; /* Thread context from mTCP */
 };
 
 #endif // _ONVM_MSG_COMMON_H_

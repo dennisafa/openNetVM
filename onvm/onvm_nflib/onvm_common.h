@@ -229,6 +229,8 @@ typedef void (*nf_msg_handler_fn)(void *msg_data, struct onvm_nf_local_ctx *nf_l
 /* Function prototype for NFs to signal handling */
 typedef void (*handle_signal_func)(int);
 
+typedef int (*nf_mtcp_msg_handler_fn)(struct onvm_nf_msg *msg, struct onvm_nf_local_ctx *nf_local_ctx);
+
 /* Contains all functions the NF might use */
 struct onvm_nf_function_table {
         nf_setup_fn  setup;
