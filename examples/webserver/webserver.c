@@ -57,10 +57,7 @@
 
 #include "onvm_nflib.h"
 #include "onvm_pkt_helper.h"
-#include "onvm_common.h"
-
-#include "mtcp_epoll.h"
-#include "mtcp_api.h"
+#include "onvm_mtcp_common.h"
 
 #define NF_TAG "webserver"
 #define MIN(a,b) (((a)<(b))?(a):(b))
