@@ -22,8 +22,7 @@
 
 #define HTTP_HEADER_LEN 1024
 #define NAME_LIMIT 256
-
-typedef struct mtcp_context *mctx_t;
+#define URL_LEN 128
 
 typedef union mtcp_epoll_data {
         void *ptr;
@@ -35,6 +34,11 @@ typedef union mtcp_epoll_data {
 struct mtcp_epoll_event {
         uint32_t events;
         mtcp_epoll_data_t data;
+};
+
+struct nf_files {
+        struct server_vars *sv;
+        struct mtcp_epoll_event *ev;
 };
 
 struct server_vars
@@ -52,12 +56,6 @@ struct server_vars
         long int fsize;					// file size
 };
 
-struct thread_context
-{
-        mctx_t mctx;
-        int ep;
-        struct server_vars *svars;
-};
 
 
 #endif

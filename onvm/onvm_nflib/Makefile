@@ -56,6 +56,6 @@ LIB    = libonvm.a
 SRCS-y := onvm_pkt_helper.c onvm_sc_common.c onvm_sc_mgr.c onvm_flow_table.c onvm_flow_dir.c onvm_nflib.c onvm_pkt_common.c onvm_config_common.c onvm_threading.c
 
 CFLAGS += $(WERROR_FLAGS) -O3 $(USER_FLAGS)
-CFLAGS += -I$(ONVM_HOME)/onvm/lib -I/local/onvm/mtcp/mtcp/lib
+CFLAGS += -I$(ONVM_HOME)/onvm/lib
 
 include $(RTE_SDK)/mk/rte.extlib.mk

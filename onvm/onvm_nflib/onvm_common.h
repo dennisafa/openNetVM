@@ -85,11 +85,6 @@
 /* Maximum length of NF_TAG including the \0 */
 #define TAG_SIZE 15
 
-/* mTCP stuff */
-#define HTTP_HEADER_LEN 1024
-#define URL_LEN 128
-#define NAME_LIMIT 256
-
 // flag operations that should be used on onvm_pkt_meta
 #define ONVM_CHECK_BIT(flags, n) !!((flags) & (1 << (n)))
 #define ONVM_SET_BIT(flags, n) ((flags) | (1 << (n)))
@@ -234,8 +229,6 @@ typedef void (*nf_msg_handler_fn)(void *msg_data, struct onvm_nf_local_ctx *nf_l
 /* Function prototype for NFs to signal handling */
 typedef void (*handle_signal_func)(int);
 
-typedef int (*nf_mtcp_msg_handler_fn)(struct onvm_nf_msg *msg, struct onvm_nf_local_ctx *nf_local_ctx);
-
 /* Contains all functions the NF might use */
 struct onvm_nf_function_table {
         nf_setup_fn  setup;
@@ -258,26 +251,7 @@ struct onvm_nf_local_ctx {
         struct onvm_nf *nf;
         rte_atomic16_t nf_init_finished;
         rte_atomic16_t keep_running;
-};
-
-struct nf_files {
-        struct server_vars *sv;
-        struct mtcp_epoll_event *ev;
-};
-
-struct server_vars
-{
-        char request[HTTP_HEADER_LEN];
-        int recv_len;
-        int request_len;
-        long int total_read, total_sent;
-        uint8_t done;
-        uint8_t rspheader_sent;
-        uint8_t keep_alive;
-
-        int fidx;						// file cache index
-        char fname[NAME_LIMIT];				// file name
-        long int fsize;					// file size
+        rte_atomic16_t nf_stopped;
 };
 
 /*
