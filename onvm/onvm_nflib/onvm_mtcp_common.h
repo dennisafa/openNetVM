@@ -39,6 +39,9 @@ struct mtcp_epoll_event {
 struct nf_files {
         struct server_vars *sv;
         struct mtcp_epoll_event *ev;
+        int file_sent;
+        char *file_buffer;
+        char *response;
 };
 
 struct server_vars
@@ -55,7 +58,5 @@ struct server_vars
         char fname[NAME_LIMIT];				// file name
         long int fsize;					// file size
 };
-
-
 
 #endif

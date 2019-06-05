@@ -56,6 +56,7 @@
 #include "onvm_nflib.h"
 #include "onvm_pkt_helper.h"
 #include "onvm_common.h"
+#include "onvm_mtcp_common.h"
 
 #define NF_TAG "simple_forward"
 
@@ -200,6 +201,8 @@ main(int argc, char *argv[]) {
         //nf_local_ctx->nf->nf_mode = 3;
         struct nf_files *files = malloc(sizeof(struct nf_files));
         files->sv = malloc(sizeof(struct server_vars));
+        files->ev = malloc(sizeof(struct mtcp_epoll_event));
+        files->ev->events = 1;
         onvm_nflib_send_msg_to_nf(1, (void*) files);
 
         onvm_nflib_run(nf_local_ctx);

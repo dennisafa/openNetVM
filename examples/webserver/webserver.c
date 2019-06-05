@@ -54,18 +54,34 @@
 #include <rte_common.h>
 #include <rte_ip.h>
 #include <rte_mbuf.h>
+#include <rte_malloc.h>
 
 #include "onvm_nflib.h"
 #include "onvm_pkt_helper.h"
 #include "onvm_mtcp_common.h"
+#include "/local/onvm/mtcp/util/include/http_parsing.h"
 
 #define NF_TAG "webserver"
 #define MIN(a,b) (((a)<(b))?(a):(b))
 
-const char *www_main;
-DIR *dir;
+#define NAME_LIMIT 256
+#define FULLNAME_LIMIT 512
+#define MAX_FILES 30
 
-static int read_file (char *filename);
+struct file_cache
+{
+        char name[NAME_LIMIT];
+        char fullname[FULLNAME_LIMIT];
+        uint64_t size;
+        char *file;
+};
+
+const char *www_main = NULL;
+DIR *dir;
+int nfiles;
+static int read_file (struct nf_files *files, char *file_name);
+static void cache_files(void);
+static struct file_cache fcache[MAX_FILES];
 
 /*
  * Print a usage message
@@ -85,15 +101,15 @@ usage(const char *progname) {
  */
 static int
 parse_app_args(int argc, char *argv[], const char *progname) {
-        int c, dir_flag = 0;
+        int c, dir_flag = 1;
 
         while ((c = getopt(argc, argv, "p:")) != -1) {
                 switch (c) {
                         case 'p':
                                 www_main = optarg;
                                 dir = opendir(www_main);
-                                if (!dir) {
-                                        dir_flag = 1;
+                                if (dir == NULL) {
+                                        dir_flag = 0;
                                 }
                                 break;
                         case '?':
@@ -128,15 +144,18 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
 
 static void
 msg_handler(void *msg, struct onvm_nf_local_ctx *nf_local_ctx) {
-        struct nf_files *files;
+        struct nf_files *mtcp_files;
         struct mtcp_epoll_event *even;
         char *filename;
         struct server_vars *serv;
+        int success;
 
-        files = (struct nf_files *) msg;
-        even = files->ev;
-        serv = files->sv;
+        mtcp_files = (struct nf_files *) msg;
+        even = mtcp_files->ev;
+        serv = mtcp_files->sv;
         filename = serv->fname;
+
+        printf("Event: %d\n", even->events);
 
         if (even == NULL || serv == NULL || filename == NULL) {
                 printf("Invalid mTCP message\n");
@@ -145,8 +164,11 @@ msg_handler(void *msg, struct onvm_nf_local_ctx *nf_local_ctx) {
 
         switch (even->events) {
                 case MTCP_EPOLLIN:
-                        read_file(filename);
-
+                        success = read_file(mtcp_files, filename);
+                        if (success) {
+                                printf("File transmitted to main mTCP nf successfully\n\n");
+                        }
+                        break;
                 case MTCP_EPOLLOUT:
                 default:
                         printf("Unknown mTCP message\n");
@@ -155,9 +177,133 @@ msg_handler(void *msg, struct onvm_nf_local_ctx *nf_local_ctx) {
 }
 
 static int
-read_file (char *filename) {
-        printf("%s\n", filename);
-        return 0;
+read_file (struct nf_files *mtcp_files, char *mtcp_filename) {
+        struct server_vars *sv;
+        char keepalive_str[128];
+        //char response[HTTP_HEADER_LEN];
+        char t_str[128];
+        int i, scode;
+        time_t t_now;
+
+        sv = mtcp_files->sv;
+
+        //printf("mTCP main NF requests file: %s\n", mtcp_filename);
+        RTE_LOG(INFO, APP, "mTCP main NF requests file: %s\n", mtcp_filename);
+        mtcp_files->file_sent = 0;
+        for (i = 0; i < nfiles; i++) {
+                if (strcmp(fcache[i].name, mtcp_filename) == 0) {
+                        mtcp_files->file_buffer = (char *) rte_zmalloc("char_buffer", fcache[i].size, 0);
+                        mtcp_files->response = (char *) rte_zmalloc("response_buffer", HTTP_HEADER_LEN, 0);
+                        snprintf(mtcp_files->file_buffer, fcache[i].size, "%s", fcache[i].file);
+                        sv->fsize = fcache[i].size;
+                        scode = 200; // File found
+                        mtcp_files->file_sent = 1;
+                        RTE_LOG(INFO, APP, "Found file %s\n", mtcp_filename);
+                        break;
+                }
+        }
+        if (!mtcp_files->file_sent) {
+                RTE_LOG(INFO, APP, "Requested file not found\n");
+                mtcp_files->file_sent = 2; // Error, file wasn't found
+                return 0;
+        }
+
+        // Creating response header
+
+        sv->keep_alive = 0;
+        if (http_header_str_val(sv->request, "Connection: ", strlen("Connection: "), keepalive_str, 128)) {
+                if (strstr(keepalive_str, "Keep-Alive")) {
+                        sv->keep_alive = 1;
+                } else if (strstr(keepalive_str, "Close")) {
+                        sv->keep_alive = 0;
+                }
+        }
+
+        time(&t_now);
+        strftime(t_str, 128, "%a, %d %b %Y %X GMT", gmtime(&t_now));
+
+        if (sv->keep_alive) {
+                sprintf(keepalive_str, "Keep-Alive");
+        } else {
+                sprintf(keepalive_str, "Close");
+        }
+
+        sprintf(mtcp_files->response, "HTTP/1.1 %d OK\r\n"
+                          "Date: %s\r\n"
+                          "Server: Webserver on Middlebox TCP (Ubuntu)\r\n"
+                          "Content-Length: %ld\r\n"
+                          "Connection: %s\r\n\r\n",
+                scode, t_str, sv->fsize, keepalive_str);
+
+        RTE_LOG(INFO, APP, "Sending file to mTCP main NF\n");
+        onvm_nflib_send_msg_to_nf(1, (void*) mtcp_files);
+
+        return 1;
+}
+
+
+static void
+cache_files (void) {
+        struct dirent *ent;
+        uint32_t total_read;
+        int fd, ret, i;
+
+        nfiles = 0;
+        while ((ent = readdir(dir)) != NULL) { // Storing the files
+                if (strcmp(ent->d_name, ".") == 0)
+                        continue;
+                else if (strcmp(ent->d_name, "..") == 0)
+                        continue;
+
+                snprintf(fcache[nfiles].name, NAME_LIMIT, "%s", ent->d_name);
+                snprintf(fcache[nfiles].fullname, FULLNAME_LIMIT, "%s/%s",
+                         www_main, ent->d_name);
+                fd = open(fcache[nfiles].fullname, O_RDONLY);
+                if (fd < 0) {
+                        perror("open");
+                        continue;
+                } else {
+                        fcache[nfiles].size = lseek64(fd, 0, SEEK_END);
+                        lseek64(fd, 0, SEEK_SET);
+                }
+
+                fcache[nfiles].file = (char *)malloc(fcache[nfiles].size);
+                if (!fcache[nfiles].file) {
+                        perror("malloc");
+                        continue;
+                }
+
+                total_read = 0;
+                while (1) {
+                        ret = read(fd, fcache[nfiles].file + total_read,
+                                   fcache[nfiles].size - total_read);
+                        if (ret < 0) {
+                                break;
+                        } else if (ret == 0) {
+                                break;
+                        }
+                        total_read += ret;
+                }
+                if (total_read < fcache[nfiles].size) {
+                        free(fcache[nfiles].file);
+                        continue;
+                }
+                close(fd);
+                nfiles++;
+
+                if (nfiles >= MAX_FILES)
+                        break;
+        }
+
+        if (nfiles == 0) {
+                RTE_LOG(INFO, APP, "No files stored in cache\n");
+                return;
+        }
+
+        for (i = 0; i < nfiles; i++) {
+                printf("%d:%s\n", i, fcache[i].name);
+        }
+
 
 }
 
@@ -194,8 +340,9 @@ main(int argc, char *argv[]) {
                 rte_exit(EXIT_FAILURE, "Invalid command-line arguments\n");
         }
 
-        onvm_nflib_run(nf_local_ctx);
+        cache_files();
 
+        onvm_nflib_run(nf_local_ctx);
         onvm_nflib_stop(nf_local_ctx);
         printf("If we reach here, program is ending\n");
         return 0;

@@ -54,10 +54,11 @@ ONVM= $(SRCDIR)/../../onvm
 
 CFLAGS += $(WERROR_FLAGS) -O3 $(USER_FLAGS)
 
-CFLAGS += -I$(ONVM)/onvm_nflib -Wno-strict-prototypes -Wno-unused-parameter
+CFLAGS += -I$(ONVM)/onvm_nflib -I/local/onvm/mtcp/util/include -Wno-strict-prototypes -Wno-unused-parameter
 CFLAGS += -I$(ONVM)/lib
 LDFLAGS += $(ONVM)/onvm_nflib/$(RTE_TARGET)/libonvm.a
 LDFLAGS += $(ONVM)/lib/$(RTE_TARGET)/lib/libonvmhelper.a -lm
+LDFLAGS += /local/onvm/mtcp/util/http_parsing.o /local/onvm/mtcp/util/tdate_parse.o /local/onvm/mtcp/util/netlib.o -lm
 
 # workaround for a gcc bug with noreturn attribute
 # http://gcc.gnu.org/bugzilla/show_bug.cgi?id=12603
