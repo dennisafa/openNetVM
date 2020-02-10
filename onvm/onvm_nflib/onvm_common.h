@@ -109,6 +109,13 @@
 /* If a lot of children spawned this might need to be increased */
 #define NF_TERM_STOP_ITER_TIMES 10
 
+/* Load balancing info */
+#define LOAD_BALANCING_ENABLED 1
+#define MAX_CHAINS 16
+#define MAX_CONNECTIONS 1
+#define MAX_FLOWS 1024
+struct onvm_nf **default_service_chain;
+
 struct onvm_pkt_meta {
         uint8_t action;       /* Action to be performed */
         uint16_t destination; /* where to go next */

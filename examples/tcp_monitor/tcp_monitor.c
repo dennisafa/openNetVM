@@ -62,16 +62,13 @@
 #include "onvm_pkt_helper.h"
 
 #define NF_TAG "TCP Load Balancer"
-#define MAX_CHAINS 16
-#define MAX_CONNECTIONS 1
-#define MAX_FLOWS 1024
 //#define SCALED_TAG "Simple Forward Network Function";
 char *scale_tag;
-extern int default_service_chain[MAX_CHAINS];
 
 struct tcp_lb_maps {
         struct rte_hash *ip_chain; // Int to int
         struct rte_hash *chain_connections; // Int to int
+        struct rte_ring *global_flow_meta_freelist;
         struct chain_meta **chain_meta_list;
         int list_size;
         int total_connections;
@@ -89,7 +86,7 @@ struct chain_meta {
 
 // Trying to use flow specific
 struct flow_meta {
-        int service_chain[MAX_CHAINS]; // Service chain pattern
+        struct onvm_nf **service_chain; // Service chain pattern
         int global_flow_id; // Flow information is allocated from global_flow_meta
 };
 
@@ -223,7 +220,9 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, struct onvm_nf_
 
         void *flow_meta_lkup;
         struct rte_hash *flow_map;
-        //struct onvm_nf *nf;
+        struct rte_ring *global_flow_meta_freelist;
+        struct flow_meta *current_flow_meta;
+        struct onvm_nf *nf;
 
 
         if (!onvm_pkt_is_tcp(pkt) || !onvm_pkt_is_ipv4(pkt)) {
@@ -235,6 +234,7 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, struct onvm_nf_
         tcp_lb_hash_maps = nf_local_ctx->nf->data;
         chain_meta_list = tcp_lb_hash_maps->chain_meta_list;
         ip_chain = tcp_lb_hash_maps->ip_chain;
+        global_flow_meta_freelist = tcp_lb_hash_maps->global_flow_meta_freelist;
 
         ipv4_hdr = onvm_pkt_ipv4_hdr(pkt);
 
@@ -251,15 +251,21 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, struct onvm_nf_
         newkey.port_src = rte_cpu_to_be_16(tcp_hdr->src_port);
 
         if (rte_hash_lookup_data(flow_map, (void *) &newkey, &flow_meta_lkup) < 0) {
-                //printf("New flow\n");
-                rte_hash_add_key_data(flow_map, (void *) &newkey, (void *) global_flow_meta[0]);
+                printf("New flow\n");
+                if (rte_ring_dequeue(global_flow_meta_freelist, &flow_meta_lkup) < 0) {
+                        printf("Flow max reached!\n");
+                }
+                rte_hash_add_key_data(flow_map, (void *) &newkey, flow_meta_lkup);
         }
-        else { printf("Flow found\n"); }
+        else {
+                current_flow_meta = (struct flow_meta *) flow_meta_lkup;
+                nf = current_flow_meta->service_chain[0];
+                printf("Flow found: First NF %s\n", nf->tag);
+        }
+
+        //nf = default_service_chain[0];
 
         return 0;
-
-
-
         // To dealloc- if there are no more flows going to that NF
 
         // Check if this IP is attached to service chain
@@ -367,20 +373,42 @@ create_rtehashmap(const char *name, int entries, size_t key_len) {
 
 static int init_lb_maps(struct onvm_nf *nf) {
         struct tcp_lb_maps *tcp_lb_hash_maps;
-        int i;
+        int i, j;
         //struct chain_meta *start_chain;
 
         const char *ip_map = "IP to service chain";
         const char *chain_to_connections = "Service chain to connections";
         const char *scale_tag_cpy = "Simple Forward";
         const char *flow_map_name = "Flow_map";
+        const char *global_flow_meta_freelist = "Flow_meta freelist";
+
+
         scale_tag = rte_malloc(NULL, 20, 0);
         strncpy(scale_tag, scale_tag_cpy, 20);
 
+        printf("start here\n");
+
         for (i = 0; i < MAX_FLOWS; i++) {
                 global_flow_meta[i] = (struct flow_meta *) rte_malloc(NULL, sizeof(struct flow_meta), 0);
-                global_flow_meta[i] = NULL;
+                global_flow_meta[i]->service_chain = (struct onvm_nf **) rte_malloc(NULL,
+                                                                                    sizeof(struct onvm_nf *) * MAX_CHAINS, 0);
+                for (j = 0; j < MAX_CHAINS; j++) {
+                        global_flow_meta[i]->service_chain[j] = rte_malloc(NULL, sizeof(struct onvm_nf), 0);
+                }
+                global_flow_meta[i]->global_flow_id = -1;
         }
+
+        printf("PAst here\n");
+
+        default_service_chain = (struct onvm_nf **) rte_malloc(NULL,
+                                                               sizeof(struct onvm_nf *) * MAX_CHAINS, 0);
+
+        for (j = 0; j < MAX_CHAINS; j++) {
+                default_service_chain[j] = (struct onvm_nf *) rte_malloc(NULL,
+                                                                          sizeof(struct onvm_nf), 0);
+        }
+
+        //global_flow_meta[i]->service_chain[0] = NULL;
 
         tcp_lb_hash_maps = rte_malloc(NULL, sizeof(struct tcp_lb_maps), 0);
         tcp_lb_hash_maps->total_connections = 0;
@@ -401,6 +429,31 @@ static int init_lb_maps(struct onvm_nf *nf) {
                 tcp_lb_hash_maps->chain_meta_list[i]->scaled_nfs = 0;
                 tcp_lb_hash_maps->chain_meta_list[i]->num_packets = 0;
                 tcp_lb_hash_maps->chain_meta_list[i]->num_connections = 0;
+        }
+
+        tcp_lb_hash_maps->global_flow_meta_freelist = rte_ring_create(global_flow_meta_freelist, MAX_FLOWS,
+                rte_socket_id(), RING_F_SP_ENQ | RING_F_SC_DEQ);
+
+        if (tcp_lb_hash_maps->global_flow_meta_freelist == NULL) {
+                printf("Could not create ring\n");
+                exit(0);
+        }
+
+        // TODO: allow user to input this next step it should be a loop in which the static chain is constructured
+
+        default_service_chain[0] = &nfs[3]; // ID 3 is
+
+        printf("We are here\n");
+
+        for (i = 0; i < MAX_FLOWS; i++) {
+                for (j = 0; j < MAX_CHAINS; j++) {
+                        global_flow_meta[i]->service_chain[j] = default_service_chain[j];
+                }
+        }
+
+
+        for (i = 0; i < MAX_FLOWS; i++) {
+                rte_ring_enqueue(tcp_lb_hash_maps->global_flow_meta_freelist, (void *) global_flow_meta[i]);
         }
 
         nf->data = (void *) tcp_lb_hash_maps;
