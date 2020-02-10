@@ -508,7 +508,8 @@ onvm_stats_display_nfs(unsigned difftime, uint8_t verbosity_level) {
                 } else {
                         fprintf(stats_out, ONVM_STATS_REG_CONTENT,
                                 nfs[i].tag, nfs[i].instance_id, nfs[i].service_id, nfs[i].thread_info.core,
-                                rx_pps, tx_pps, rx_drop, tx_drop, act_out, act_tonf, act_drop);
+                                rx_pps, tx_pps, rx_drop, tx_drop, act_out, act_tonf, act_drop,
+                                nfs[i].resource_usage.cpu_time_proportion);
                 }
                 /* Only print this information out if we haven't already printed it to the console above */
                 if (stats_out != stdout && stats_out != stderr) {
@@ -526,6 +527,12 @@ onvm_stats_display_nfs(unsigned difftime, uint8_t verbosity_level) {
                         cJSON_AddNumberToObject(onvm_json_nf_stats[i], "instance_id",
                                                 (int16_t)nfs[i].instance_id);
                         cJSON_AddNumberToObject(onvm_json_nf_stats[i], "core", (int16_t)nfs[i].thread_info.core);
+
+                        // Add rusage information.
+                        cJSON *rusage_json;
+                        cJSON_AddItemToObject(onvm_json_nf_stats[i], "Rusage", rusage_json = cJSON_CreateObject());
+                        cJSON_AddNumberToObject(rusage_json, "CPU_Usage_Proportion", nfs[i].resource_usage.cpu_time_proportion);
+                            
 
                         free(nf_label);
                         nf_label = NULL;

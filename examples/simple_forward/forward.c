@@ -159,8 +159,8 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
                 counter = 0;
         }
 
-        meta->action = ONVM_NF_ACTION_TONF;
-        meta->destination = destination;
+        meta->action = ONVM_NF_ACTION_OUT;
+        meta->destination = 0;
         return 0;
 }
 
