@@ -62,11 +62,12 @@
 #include "onvm_pkt_helper.h"
 
 #define NF_TAG "TCP Load Balancer"
-#define MAX_CHAINS 10
+#define MAX_CHAINS 16
 #define MAX_CONNECTIONS 1
 #define MAX_FLOWS 1024
 //#define SCALED_TAG "Simple Forward Network Function";
 char *scale_tag;
+extern int default_service_chain[MAX_CHAINS];
 
 struct tcp_lb_maps {
         struct rte_hash *ip_chain; // Int to int
@@ -88,7 +89,7 @@ struct chain_meta {
 
 // Trying to use flow specific
 struct flow_meta {
-        int service_chain[16]; // Service chain pattern
+        int service_chain[MAX_CHAINS]; // Service chain pattern
         int global_flow_id; // Flow information is allocated from global_flow_meta
 };
 
@@ -382,7 +383,7 @@ static int init_lb_maps(struct onvm_nf *nf) {
         }
 
         tcp_lb_hash_maps = rte_malloc(NULL, sizeof(struct tcp_lb_maps), 0);
-        tcp_lb_hash_maps->total_connections = 3;
+        tcp_lb_hash_maps->total_connections = 0;
         tcp_lb_hash_maps->chain_connections = create_rtehashmap(chain_to_connections,
                                                                 MAX_CHAINS, sizeof(int)); // 10 service chains (for now)
         tcp_lb_hash_maps->ip_chain = create_rtehashmap(ip_map, 1000, sizeof(int)); // 1000 different IP addresses
