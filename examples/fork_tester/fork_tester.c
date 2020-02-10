@@ -78,7 +78,7 @@
 #define DEFAULT_LAT_PKT_NUM 16
 #define MAX_PKT_NUM NF_QUEUE_RINGSIZE
 
-static uint32_t fork_delay = 10000000;
+static uint32_t fork_delay = 10000;
 static uint16_t destination;
 
 /*user defined packet size and destination mac address
@@ -231,7 +231,7 @@ do_fork(void) {
         if (!has_split && i <= 1) {
             printf("Forking\n");
             has_split = 1;
-            onvm_nflib_fork();
+//            onvm_nflib_fork(".", 1, 2);
         }
 }
 
@@ -239,7 +239,7 @@ static int
 packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
                __attribute__((unused)) struct onvm_nf_local_ctx *nf_local_ctx) {
         static uint32_t counter = 0;
-        if (counter++ == fork_delay && fork_flag) {
+        if (counter++ >= fork_delay && fork_flag) {
                 do_fork();
                 counter = 0;
         }
@@ -261,6 +261,7 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
                 /* Drop real incoming packets */
                 meta->action = ONVM_NF_ACTION_DROP;
         }
+	usleep(50);
         return 0;
 }
 

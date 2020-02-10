@@ -79,7 +79,7 @@ extern const char *NF_MSG[3];
         "act_out,act_tonf,act_drop,act_next,act_buffer,act_returned,num_wakeups,wakeup_rate\n"
 #define ONVM_STATS_REG_CONTENT \
         "%-14s %2u  /  %-2u / %2u    %9" PRIu64 " / %-9" PRIu64 "   %11" PRIu64 " / %-11" PRIu64\
-        "  %11" PRIu64 " / %-11" PRIu64 " / %-11" PRIu64 " \n" PRIu64\
+        "  %11" PRIu64 " / %-11" PRIu64 " / %-11" PRIu64 "\n" \
         "%05lf\n"
 #define ONVM_STATS_REG_TOTALS \
         "SID %-2u %2u%s -                   %9" PRIu64 " / %-9" PRIu64 "   %11" PRIu64\

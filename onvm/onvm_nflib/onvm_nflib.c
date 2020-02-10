@@ -55,6 +55,7 @@
 #include <math.h>
 #include <time.h>
 #include <sys/resource.h>
+#include <unistd.h>
 
 /******************************DPDK libraries*********************************/
 #include "rte_malloc.h"
@@ -64,7 +65,6 @@
 #include "onvm_includes.h"
 #include "onvm_nflib.h"
 #include "onvm_sc_common.h"
-#include "onvm_rusage.h"
 
 /**********************************Macros*************************************/
 
@@ -413,6 +413,13 @@ onvm_nflib_init(int argc, char *argv[], const char *nf_tag, struct onvm_nf_local
                 return 3;
         }
 
+	// Set up CPU-usage tracking.
+	nf_local_ctx->nf->pid = getpid();
+	RTE_LOG(INFO, APP, "My PID is %d\n", nf_local_ctx->nf->pid);
+
+        nf_local_ctx->nf->resource_usage.last_usage = 0;
+	nf_local_ctx->nf->resource_usage.cpu_time_proportion = 0;
+
         return retval_final;
 }
 
@@ -597,8 +604,6 @@ onvm_nflib_thread_main_loop(void *arg) {
 
         start_time = rte_get_tsc_cycles();
         for (;rte_atomic16_read(&nf_local_ctx->keep_running) && rte_atomic16_read(&main_nf_local_ctx->keep_running);) {
-                onvm_rusage_update(nf);
-
                 /* Possibly sleep if in shared core mode, otherwise continue */
                 if (ONVM_NF_SHARE_CORES) {
                         if (unlikely(rte_ring_count(nf->rx_q) == 0) && likely(rte_ring_count(nf->msg_q) == 0)) {
@@ -667,9 +672,6 @@ int
 onvm_nflib_nf_ready(struct onvm_nf *nf) {
         struct onvm_nf_msg *startup_msg;
         int ret;
-
-        nf->resource_usage.last_update = 0;
-        memset(&nf->resource_usage.rusage, 0, sizeof(struct rusage));
 
         /* Put this NF's info struct onto queue for manager to process startup */
         ret = rte_mempool_get(nf_msg_pool, (void **)(&startup_msg));
@@ -905,7 +907,7 @@ onvm_nflib_fork(const char *nf_app_dir, int host_sid, int sid) {
 		
 		char *_nf_app_dir = strdup(nf_app_dir);
         printf("%s", _nf_app_dir);
-        int err = execl("/users/dennisa/openNetVM/examples/simple_forward/build/app/simple_forward", "-l", "7", "-n", "3", "--proc-type=secondary", "--", "-r", sid_str, "--","-d", "1", NULL);
+        int err = execl("/users/dennisa/openNetVM/examples/simple_forward/build/app/simple_forward", "-n", "3", "--proc-type=secondary", "--", "-s", "-r", sid_str, "--", "-d", "1", NULL);
 		// If we reach here, an error has occurred.
 		printf("fork() returned an error: %d\n", err);
 		return -1;

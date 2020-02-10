@@ -56,6 +56,7 @@
 #include <rte_hash.h>
 #include <sys/resource.h>
 #include <sys/time.h>
+#include <unistd.h>
 
 #include "onvm_config_common.h"
 #include "onvm_msg_common.h"
@@ -263,6 +264,7 @@ struct onvm_nf_local_ctx {
  * This structure is available in the NF when processing packets or executing the callback.
  */
 struct onvm_nf {
+	pid_t pid;
         struct rte_ring *rx_q;
         struct rte_ring *tx_q;
         struct rte_ring *msg_q;
@@ -327,10 +329,8 @@ struct onvm_nf {
         } shared_core;
 
         struct {
-                long last_update; 
-                struct rusage last_rusage;
-                struct rusage rusage;
-                struct timeval time_usage_delta;
+                unsigned long last_update; 
+		unsigned long last_usage;
 
                 // In the range [0, 1], indicates total CPU usage.
                 double cpu_time_proportion;
