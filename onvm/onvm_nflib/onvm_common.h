@@ -109,13 +109,6 @@
 /* If a lot of children spawned this might need to be increased */
 #define NF_TERM_STOP_ITER_TIMES 10
 
-/* Load balancing info */
-#define LOAD_BALANCING_ENABLED 1
-#define MAX_CHAINS 16
-#define MAX_CONNECTIONS 1
-#define MAX_FLOWS 1024
-struct onvm_nf **default_service_chain;
-
 struct onvm_pkt_meta {
         uint8_t action;       /* Action to be performed */
         uint16_t destination; /* where to go next */
@@ -279,6 +272,7 @@ struct onvm_nf {
         struct queue_mgr *nf_tx_mgr;
         uint16_t instance_id;
         uint16_t service_id;
+        uint16_t num_flows;
         uint8_t status;
         char *tag;
         /* Pointer to NF defined state data */
@@ -337,7 +331,7 @@ struct onvm_nf {
 
         struct {
                 unsigned long last_update; 
-		unsigned long last_usage;
+                unsigned long last_usage;
 
                 // In the range [0, 1], indicates total CPU usage.
                 double cpu_time_proportion;

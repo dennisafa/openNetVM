@@ -295,6 +295,7 @@ onvm_nf_start(struct onvm_nf_init_cfg *nf_init_cfg) {
         spawned_nf->thread_info.core = nf_init_cfg->core;
         spawned_nf->flags.time_to_live = nf_init_cfg->time_to_live;
         spawned_nf->flags.pkt_limit = nf_init_cfg->pkt_limit;
+        spawned_nf->num_flows = 0;
         // Let the NF continue its init process
         nf_init_cfg->status = NF_STARTING;
         return 0;

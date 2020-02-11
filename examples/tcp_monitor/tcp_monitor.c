@@ -60,20 +60,11 @@
 
 #include "onvm_nflib.h"
 #include "onvm_pkt_helper.h"
+#include "onvm_load_balance.h"
 
 #define NF_TAG "TCP Load Balancer"
 //#define SCALED_TAG "Simple Forward Network Function";
 char *scale_tag;
-
-struct tcp_lb_maps {
-        struct rte_hash *ip_chain; // Int to int
-        struct rte_hash *chain_connections; // Int to int
-        struct rte_ring *global_flow_meta_freelist;
-        struct chain_meta **chain_meta_list;
-        int list_size;
-        int total_connections;
-        struct rte_hash *flow_map;
-};
 
 struct chain_meta {
         int num_connections;
@@ -85,10 +76,6 @@ struct chain_meta {
 };
 
 // Trying to use flow specific
-struct flow_meta {
-        struct onvm_nf **service_chain; // Service chain pattern
-        int global_flow_id; // Flow information is allocated from global_flow_meta
-};
 
 static struct flow_meta *global_flow_meta[MAX_FLOWS];
 
@@ -204,57 +191,70 @@ callback_handler(__attribute__((unused)) struct onvm_nf_local_ctx *nf_local_ctx)
 static int
 packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, struct onvm_nf_local_ctx *nf_local_ctx) {
         struct tcp_lb_maps *tcp_lb_hash_maps;
-        struct rte_hash *ip_chain;
-        struct chain_meta **chain_meta_list;
-        void *chain_meta_data;
         struct chain_meta *lkup_chain_meta;
-        int min, i, index, to_kill;
-        long ip_addr_long;
-        int scaled_nfs, next_id;
+        int hash_ret;
+        int dest;
+
         uint16_t flags = 0;
         static uint32_t counter = 0;
+        union ipv4_5tuple_host newkey;
 
         struct tcp_hdr *tcp_hdr;
         struct ipv4_hdr *ipv4_hdr;
 
-
         void *flow_meta_lkup;
-        struct rte_hash *flow_map;
         struct rte_ring *global_flow_meta_freelist;
         struct flow_meta *current_flow_meta;
         struct onvm_nf *nf;
+        struct rte_hash *flow_map;
+
+        tcp_lb_hash_maps = (struct tcp_lb_maps *) nf_local_ctx->nf->data;
+        flow_map = tcp_lb_hash_maps->flow_map;
 
 
         if (!onvm_pkt_is_tcp(pkt) || !onvm_pkt_is_ipv4(pkt)) {
                 printf("Packet isn't TCP/IPv4");
-                meta->action = ONVM_NF_ACTION_OUT;
-                meta->destination = 0;
+                meta->action = ONVM_NF_ACTION_TONF;
+                meta->destination = 2;
                 return 0;
         }
         tcp_lb_hash_maps = nf_local_ctx->nf->data;
-        chain_meta_list = tcp_lb_hash_maps->chain_meta_list;
-        ip_chain = tcp_lb_hash_maps->ip_chain;
         global_flow_meta_freelist = tcp_lb_hash_maps->global_flow_meta_freelist;
 
         ipv4_hdr = onvm_pkt_ipv4_hdr(pkt);
-
-        //flow_map = tcp_lb_hash_maps->flow_map;
-
         tcp_hdr = onvm_pkt_tcp_hdr(pkt);
-        flow_map = tcp_lb_hash_maps->flow_map;
-
-        union ipv4_5tuple_host newkey;
 
         newkey.ip_dst = rte_cpu_to_be_32(ipv4_hdr->dst_addr);
         newkey.ip_src = rte_cpu_to_be_32(ipv4_hdr->src_addr);
         newkey.port_dst = rte_cpu_to_be_16(tcp_hdr->dst_port);
         newkey.port_src = rte_cpu_to_be_16(tcp_hdr->src_port);
 
-        if (rte_hash_lookup_data(flow_map, (void *) &newkey, &flow_meta_lkup) < 0) {
+
+        flags = ((tcp_hdr->data_off << 8) | tcp_hdr->tcp_flags) & 0b111111111;
+        hash_ret = rte_hash_lookup_data(flow_map, (void *) &newkey, &flow_meta_lkup);
+
+        if (hash_ret < 0 && ((flags >> 1) & 0x1)) {
                 printf("New flow\n");
                 if (rte_ring_dequeue(global_flow_meta_freelist, &flow_meta_lkup) < 0) {
                         printf("Flow max reached!\n");
                 }
+
+                current_flow_meta = (struct flow_meta *) flow_meta_lkup;
+                for (int i = 0; i < MAX_CHAINS; i++) {
+                        nf = current_flow_meta->service_chain[i];
+                        if (nf != NULL) {
+                                nf->num_flows++;
+//                                printf("Nf is overflowing, CPU\n");
+//                                printf("NF: %s\n", nf->tag);
+                                if (nf->resource_usage.cpu_time_proportion > 0.8) {
+//                                        printf("Nf is overflowing, CPU\n");
+//                                        printf("NF: %s\n", nf->tag);
+                                          printf("Need to scale\n");
+
+                                }
+                        }
+                }
+
                 rte_hash_add_key_data(flow_map, (void *) &newkey, flow_meta_lkup);
         }
         else {
@@ -263,80 +263,76 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, struct onvm_nf_
                 printf("Flow found: First NF %s\n", nf->tag);
         }
 
-        //nf = default_service_chain[0];
+        dest = current_flow_meta->service_chain[0]->service_id;
+        printf("Sending to %d\n", dest);
+
+//        if ((flags >> 1) & 0x1) { // SYN so add connection count to service chain
+//                printf("SYN,\n");
+//        }
+
+
+//        if (flags & 0x1) { // FIN
+//                printf("FIN, killing %d\n", to_kill);
+//        }
+
+        meta->action = ONVM_NF_ACTION_TONF; // otherwise we have a scaled nf so send it to that
+        meta->destination = dest;
 
         return 0;
+
+        //nf = default_service_chain[0];
+
         // To dealloc- if there are no more flows going to that NF
 
         // Check if this IP is attached to service chain
         // If new IP comes in, map to service chain with least amount of connections. First one is default to 3
-        if (rte_hash_lookup_data(ip_chain, &ip_addr_long, &chain_meta_data) < 0) {
-                //new_chain_meta = rte_malloc(NULL, sizeof(struct chain_meta), 0);
-                printf("Attaching IP to chain with least connections\n");
-                index = 0;
-                min = chain_meta_list[index]->num_connections;
-                for (i = index + 1; i < tcp_lb_hash_maps->list_size; i++) {
-                        if (chain_meta_list[i]->num_connections < min) {
-                                index = i;
-                                min = chain_meta_list[i]->num_connections;
-                        }
-                }
+//        if (rte_hash_lookup_data(ip_chain, &ip_addr_long, &chain_meta_data) < 0) {
+//                //new_chain_meta = rte_malloc(NULL, sizeof(struct chain_meta), 0);
+//                printf("Attaching IP to chain with least connections\n");
+//                index = 0;
+//                min = chain_meta_list[index]->num_connections;
+//                for (i = index + 1; i < tcp_lb_hash_maps->list_size; i++) {
+//                        if (chain_meta_list[i]->num_connections < min) {
+//                                index = i;
+//                                min = chain_meta_list[i]->num_connections;
+//                        }
+//                }
+//
+//                lkup_chain_meta = (struct chain_meta *) chain_meta_list[index];
+//                lkup_chain_meta->num_packets = 0;
+//                rte_hash_add_key_data(ip_chain, &ip_addr_long, (void *) lkup_chain_meta);
+//        } else {
+//                lkup_chain_meta = (struct chain_meta *) chain_meta_data;
+//                min = lkup_chain_meta->num_connections / lkup_chain_meta->scaled_nfs;
+//                printf("Min: %d\n", min);
+//                printf("Num connections: %d scaled nfs: %d\n", lkup_chain_meta->num_connections,
+//                       lkup_chain_meta->scaled_nfs);
+//                if (min >= MAX_CONNECTIONS) {
+//                        printf("Hit the maximum amount of connections, scaling\n");
+//                        lkup_chain_meta->scaled_nfs++;
+//                        next_id = ++tcp_lb_hash_maps->total_connections;
+//                        pid_t saved_pid = onvm_nflib_fork("simple_forward", 2, next_id);
+//                        //lkup_chain_meta->scaled_nfs
+//                        // TODO: Scale here
+//                        /* Each IP gets meta_chain index in bucket, each IP gets list of NF's it may scale to.
+//                         I.E 4 connections from one IP, max connections is 2.
+//                         2 of the connections get sent to chain ID 1, the other two get sent to chain ID 2.
+//                         We need to spawn the new chain and put the ID into the array
+//                         This could be a message sent to other process that scales for us
+//                         */
+//
+//                        scaled_nfs = lkup_chain_meta->scaled_nfs; // place holder
+//                        printf("Scaled nfs val: %d\n", scaled_nfs);
+//                        lkup_chain_meta->chain_id[scaled_nfs - 1] =
+//                                next_id; // first two are mtcp and balancer
+//                        lkup_chain_meta->pid_list[0] = saved_pid;
+//
+//                        printf("Meta dest ID %d\n", lkup_chain_meta->dest_id);
+//                        printf("Meta dest ID %d\n", lkup_chain_meta->dest_id);
+//                }
+//
+//        }
 
-                lkup_chain_meta = (struct chain_meta *) chain_meta_list[index];
-                lkup_chain_meta->num_packets = 0;
-                rte_hash_add_key_data(ip_chain, &ip_addr_long, (void *) lkup_chain_meta);
-        } else {
-                lkup_chain_meta = (struct chain_meta *) chain_meta_data;
-                min = lkup_chain_meta->num_connections / lkup_chain_meta->scaled_nfs;
-                printf("Min: %d\n", min);
-                printf("Num connections: %d scaled nfs: %d\n", lkup_chain_meta->num_connections,
-                       lkup_chain_meta->scaled_nfs);
-                if (min >= MAX_CONNECTIONS) {
-                        printf("Hit the maximum amount of connections, scaling\n");
-                        lkup_chain_meta->scaled_nfs++;
-                        next_id = ++tcp_lb_hash_maps->total_connections;
-                        pid_t saved_pid = onvm_nflib_fork("simple_forward", 2, next_id);
-                        //lkup_chain_meta->scaled_nfs
-                        // TODO: Scale here
-                        /* Each IP gets meta_chain index in bucket, each IP gets list of NF's it may scale to.
-                         I.E 4 connections from one IP, max connections is 2.
-                         2 of the connections get sent to chain ID 1, the other two get sent to chain ID 2.
-                         We need to spawn the new chain and put the ID into the array
-                         This could be a message sent to other process that scales for us
-                         */
-
-                        scaled_nfs = lkup_chain_meta->scaled_nfs; // place holder
-                        printf("Scaled nfs val: %d\n", scaled_nfs);
-                        lkup_chain_meta->chain_id[scaled_nfs - 1] =
-                                next_id; // first two are mtcp and balancer
-                        lkup_chain_meta->pid_list[0] = saved_pid;
-
-                        printf("Meta dest ID %d\n", lkup_chain_meta->dest_id);
-                        printf("Meta dest ID %d\n", lkup_chain_meta->dest_id);
-                }
-
-        }
-
-
-        flags = ((tcp_hdr->data_off << 8) | tcp_hdr->tcp_flags) & 0b111111111;
-
-        if ((flags >> 1) & 0x1) { // SYN so add connection count to service chain
-                printf("SYN,\n");
-                lkup_chain_meta->num_connections++;
-                printf("Num connections after syn: %d\n", lkup_chain_meta->num_connections);
-        }
-
-
-        if (flags & 0x1) { // FIN
-                scaled_nfs = lkup_chain_meta->scaled_nfs;
-                to_kill = lkup_chain_meta->chain_id[scaled_nfs - 1];
-                printf("FIN, killing %d\n", to_kill);
-                lkup_chain_meta->num_connections--;
-                lkup_chain_meta->scaled_nfs--;
-                if (onvm_nflib_send_kill_msg(to_kill) != 0) {
-                        printf("Couldn't kill %d\n", to_kill);
-                }
-        }
 
 
         total_packets++;
@@ -375,13 +371,6 @@ static int init_lb_maps(struct onvm_nf *nf) {
         struct tcp_lb_maps *tcp_lb_hash_maps;
         int i, j;
         //struct chain_meta *start_chain;
-
-        const char *ip_map = "IP to service chain";
-        const char *chain_to_connections = "Service chain to connections";
-        const char *scale_tag_cpy = "Simple Forward";
-        const char *flow_map_name = "Flow_map";
-        const char *global_flow_meta_freelist = "Flow_meta freelist";
-
 
         scale_tag = rte_malloc(NULL, 20, 0);
         strncpy(scale_tag, scale_tag_cpy, 20);
