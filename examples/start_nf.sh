@@ -82,4 +82,4 @@ elif [[ $dash_dash_cnt -eq 1 ]]; then
   exit 1
 fi
 
-exec sudo gdb --args $BINARY $DPDK_ARGS -- $ONVM_ARGS -- "$@"
+exec sudo $BINARY $DPDK_ARGS -- $ONVM_ARGS -- "$@"

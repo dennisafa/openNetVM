@@ -602,29 +602,6 @@ onvm_nflib_thread_main_loop(void *arg) {
         if (nf->function_table->setup != NULL)
                 nf->function_table->setup(nf_local_ctx);
 
-
-        struct rte_hash *flow_map;
-        union ipv4_5tuple_host newkey;
-        void *flow_meta_lkup;
-
-        flow_map = rte_hash_find_existing("Flow_map");
-        if (flow_map == NULL) {
-                printf("Couldn't find flow map\n");
-        }
-        else {
-                printf("Found the flow table\n");
-        }
-
-        newkey.ip_dst = 500;
-        newkey.ip_src = 500;
-        newkey.port_dst = 11;
-        newkey.port_src = 10;
-
-        printf("Flow map: %p\n", flow_map);
-        printf("%d", rte_hash_count(flow_map));
-        rte_hash_lookup_data(flow_map, (void *) &newkey, &flow_meta_lkup);
-
-
         start_time = rte_get_tsc_cycles();
         for (; rte_atomic16_read(&nf_local_ctx->keep_running) && rte_atomic16_read(&main_nf_local_ctx->keep_running);) {
                 /* Possibly sleep if in shared core mode, otherwise continue */

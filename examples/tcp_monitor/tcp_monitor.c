@@ -201,7 +201,7 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
         int dest;
         struct onvm_flow_entry *flow_entry = NULL;
         struct onvm_service_chain *sc;
-
+        struct tcp_hdr *tcp_hdr;
 
         uint16_t flags = 0;
         static uint32_t counter = 0;
@@ -217,15 +217,17 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
                 return 0;
         }
 
+        tcp_hdr = onvm_pkt_tcp_hdr(pkt);
+        flags = ((tcp_hdr->data_off << 8) | tcp_hdr->tcp_flags) & 0b111111111;
+
         fd_ret = onvm_flow_dir_get_pkt(pkt, &flow_entry);
-        if (fd_ret < 0) {
-                printf("New flow\n");
+        if (fd_ret < 0 && (flags >> 1) & 0x1) {
+                //printf("New flow\n");
                 onvm_flow_dir_add_pkt(pkt, &flow_entry);
                 memset(flow_entry, 0, sizeof(struct onvm_flow_entry));
                 flow_entry->sc = onvm_sc_create();
 
                 for (int i = 0; i < chain_length; i++) {
-                        onvm_sc_append_entry(flow_entry->sc, ONVM_NF_ACTION_TONF, default_service_chain_id[i]);
                         next_dest_id = default_service_chain_id[i];
                         nf = &nfs[next_dest_id];
                         if (nf->resource_usage.cpu_time_proportion > 0.8) {
@@ -233,22 +235,34 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
                                 printf("NF: %s\n", nf->tag);
                                 printf("Need to scale NF %d\n", nf->service_id);
 
+                        } else {
+                                onvm_sc_append_entry(flow_entry->sc, ONVM_NF_ACTION_TONF, default_service_chain_id[i]);
                         }
                 }
 
+                sc = flow_entry->sc;
                 dest = default_service_chain_id[0];
         }
         else {
-                printf("Flow found\n");
+                //printf("Flow found\n");
                 sc = flow_entry->sc;
                 dest = sc->sc[0].destination;
         }
 
+        nf = &nfs[default_service_chain_id[0]];
+        if ((flags >> 1) & 0x1) { // SYN so add connection count to service chain
+                nf->num_flows++;
+                printf("Number of flows: %d\n", nf->num_flows);
+        }
+
+        // TODO subtract and add flows from all NF's
+        if (flags & 0x1) { // SYN so add connection count to service chain
+                nf->num_flows--;
+                printf("Number of flows: %d\n", nf->num_flows);
+        }
+
         // If the nf is stateless, and if the CPU usage is above certain percentage, make it alternate sending across
         // different NF's
-        if ((flags >> 1) & 0x1) { // SYN so add connection count to service chain
-                printf("SYN,\n");
-        }
 
 
 //        if (flags & 0x1) { // FIN
