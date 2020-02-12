@@ -270,33 +270,6 @@ init(int argc, char *argv[]) {
 
         onvm_flow_dir_init();
 
-        struct rte_hash_parameters *ipv4_hash_params;
-        struct rte_hash *flow_map;
-        const char *name = "Flow_map";
-
-        ipv4_hash_params = (struct rte_hash_parameters *) rte_malloc(NULL, sizeof(struct rte_hash_parameters), 0);
-        if (!ipv4_hash_params) {
-                return -1;
-        }
-
-        char *tbl_name = rte_malloc(NULL, sizeof(name) + 1, 0);
-        /* create ipv4 hash table. use core number and cycle counter to get a unique name. */
-        ipv4_hash_params->entries = 1024;
-        ipv4_hash_params->key_len = sizeof(union ipv4_5tuple_host);
-        ipv4_hash_params->hash_func = rte_jhash;
-        ipv4_hash_params->hash_func_init_val = 0;
-        ipv4_hash_params->name = tbl_name;
-        ipv4_hash_params->socket_id = rte_socket_id();
-        printf("Socket ID %d\n", rte_socket_id());
-        ipv4_hash_params->extra_flag = RTE_HASH_EXTRA_FLAGS_RW_CONCURRENCY_LF;
-        snprintf(tbl_name, sizeof(name) + 1, "%s", name);
-        printf("Name: %s\n", tbl_name);
-        flow_map = rte_hash_create(ipv4_hash_params);
-        if (flow_map == NULL) {
-                printf("Failed to create hash map\n");
-        }
-        else { printf("Flow map created successfully\n"); }
-
         return 0;
 }
 

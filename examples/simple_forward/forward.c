@@ -229,29 +229,7 @@ main(int argc, char *argv[]) {
                 rte_exit(EXIT_FAILURE, "Invalid command-line arguments\n");
         }
 
-        flow_map_obj = rte_hash_find_existing(flow_map_name);
-        if (flow_map_obj == NULL) {
-                printf("Could not find flow map\n");
-                exit(0);
-        }
-        //void *flow_meta_lkup;
-
-        union ipv4_5tuple_host newkey;
-
-        newkey.ip_dst = 500;
-        newkey.ip_src = 500;
-        newkey.port_dst = 11;
-        newkey.port_src = 10;
-
-        printf("Flow map: %p\n", flow_map_obj);
-        printf("Count: %d\n", rte_hash_count(flow_map_obj));
-        sleep(1);
-        int ret = rte_hash_lookup(flow_map_obj, (void *) &newkey);
-        printf("ret %d\n", ret);
-        //rte_hash_lookup_data(flow_map_obj, (void *) &newkey, &flow_meta_lkup);
-
         onvm_nflib_run(nf_local_ctx);
-
         onvm_nflib_stop(nf_local_ctx);
         printf("If we reach here, program is ending\n");
         return 0;

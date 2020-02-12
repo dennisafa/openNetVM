@@ -79,6 +79,9 @@ struct chain_meta {
 
 static struct flow_meta *global_flow_meta[MAX_FLOWS];
 
+int default_service_chain_id[MAX_CHAINS];
+int chain_length = 1;
+
 // Used for flow hashing
 #define BYTE_VALUE_MAX 256
 #define ALL_32_BITS 0xffffffff
@@ -93,7 +96,7 @@ static uint64_t last_cycle;
 static uint64_t cur_cycles;
 
 int create_rtehashmap(const char *name, int entries, size_t key_len);
-struct rte_hash *flow_map;
+static struct rte_hash *flow_map;
 
 /* shared data structure containing host port info */
 extern struct port_info *ports;
@@ -192,25 +195,19 @@ callback_handler(__attribute__((unused)) struct onvm_nf_local_ctx *nf_local_ctx)
 
 
 static int
-packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, struct onvm_nf_local_ctx *nf_local_ctx) {
-        struct tcp_lb_maps *tcp_lb_hash_maps;
+packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((unused)) struct onvm_nf_local_ctx *nf_local_ctx) {
         struct chain_meta *lkup_chain_meta;
-        int hash_ret;
+        int fd_ret;
         int dest;
+        struct onvm_flow_entry *flow_entry = NULL;
+        struct onvm_service_chain *sc;
+
 
         uint16_t flags = 0;
         static uint32_t counter = 0;
-        union ipv4_5tuple_host newkey;
 
-        struct tcp_hdr *tcp_hdr;
-        struct ipv4_hdr *ipv4_hdr;
-
-        void *flow_meta_lkup;
-        struct rte_ring *global_flow_meta_freelist;
-        struct flow_meta *current_flow_meta;
         struct onvm_nf *nf;
-
-        tcp_lb_hash_maps = (struct tcp_lb_maps *) nf_local_ctx->nf->data;
+        int next_dest_id;
 
 
         if (!onvm_pkt_is_tcp(pkt) || !onvm_pkt_is_ipv4(pkt)) {
@@ -219,58 +216,39 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, struct onvm_nf_
                 meta->destination = 2;
                 return 0;
         }
-        tcp_lb_hash_maps = nf_local_ctx->nf->data;
-        global_flow_meta_freelist = tcp_lb_hash_maps->global_flow_meta_freelist;
 
-        ipv4_hdr = onvm_pkt_ipv4_hdr(pkt);
-        tcp_hdr = onvm_pkt_tcp_hdr(pkt);
-
-        newkey.ip_dst = rte_cpu_to_be_32(ipv4_hdr->dst_addr);
-        newkey.ip_src = rte_cpu_to_be_32(ipv4_hdr->src_addr);
-        newkey.port_dst = rte_cpu_to_be_16(tcp_hdr->dst_port);
-        newkey.port_src = rte_cpu_to_be_16(tcp_hdr->src_port);
-        printf("Perf lookup\n\n\n");
-
-
-        flags = ((tcp_hdr->data_off << 8) | tcp_hdr->tcp_flags) & 0b111111111;
-        hash_ret = rte_hash_lookup_data(flow_map, (void *) &newkey, &flow_meta_lkup);
-
-        if (hash_ret < 0 && ((flags >> 1) & 0x1)) {
+        fd_ret = onvm_flow_dir_get_pkt(pkt, &flow_entry);
+        if (fd_ret < 0) {
                 printf("New flow\n");
-                if (rte_ring_dequeue(global_flow_meta_freelist, &flow_meta_lkup) < 0) {
-                        printf("Flow max reached!\n");
-                }
+                onvm_flow_dir_add_pkt(pkt, &flow_entry);
+                memset(flow_entry, 0, sizeof(struct onvm_flow_entry));
+                flow_entry->sc = onvm_sc_create();
 
-                current_flow_meta = (struct flow_meta *) flow_meta_lkup;
-                for (int i = 0; i < MAX_CHAINS; i++) {
-                        nf = current_flow_meta->service_chain[i];
-                        if (nf != NULL) {
-                                nf->num_flows++;
-//                                printf("Nf is overflowing, CPU\n");
-//                                printf("NF: %s\n", nf->tag);
-                                if (nf->resource_usage.cpu_time_proportion > 0.8) {
-//                                        printf("Nf is overflowing, CPU\n");
-//                                        printf("NF: %s\n", nf->tag);
-                                          printf("Need to scale\n");
+                for (int i = 0; i < chain_length; i++) {
+                        onvm_sc_append_entry(flow_entry->sc, ONVM_NF_ACTION_TONF, default_service_chain_id[i]);
+                        next_dest_id = default_service_chain_id[i];
+                        nf = &nfs[next_dest_id];
+                        if (nf->resource_usage.cpu_time_proportion > 0.8) {
+                                printf("Nf is overflowing, CPU\n");
+                                printf("NF: %s\n", nf->tag);
+                                printf("Need to scale NF %d\n", nf->service_id);
 
-                                }
                         }
                 }
 
-                rte_hash_add_key_data(flow_map, (void *) &newkey, flow_meta_lkup);
+                dest = default_service_chain_id[0];
         }
         else {
-                current_flow_meta = (struct flow_meta *) flow_meta_lkup;
-                nf = current_flow_meta->service_chain[0];
-                printf("Flow found: First NF %s\n", nf->tag);
+                printf("Flow found\n");
+                sc = flow_entry->sc;
+                dest = sc->sc[0].destination;
         }
 
-        dest = current_flow_meta->service_chain[0]->service_id;
-        printf("Sending to %d\n", dest);
-
-//        if ((flags >> 1) & 0x1) { // SYN so add connection count to service chain
-//                printf("SYN,\n");
-//        }
+        // If the nf is stateless, and if the CPU usage is above certain percentage, make it alternate sending across
+        // different NF's
+        if ((flags >> 1) & 0x1) { // SYN so add connection count to service chain
+                printf("SYN,\n");
+        }
 
 
 //        if (flags & 0x1) { // FIN
@@ -278,7 +256,7 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, struct onvm_nf_
 //        }
 
         meta->action = ONVM_NF_ACTION_TONF; // otherwise we have a scaled nf so send it to that
-        meta->destination = 2;
+        meta->destination = dest;
 
         return 0;
 
@@ -367,10 +345,9 @@ create_rtehashmap(const char *name, int entries, size_t key_len) {
         ipv4_hash_params->entries = entries;
         ipv4_hash_params->key_len = key_len;
         ipv4_hash_params->hash_func = rte_jhash;
-        ipv4_hash_params->hash_func_init_val = 0;
         ipv4_hash_params->name = tbl_name;
         ipv4_hash_params->socket_id = rte_socket_id();
-        ipv4_hash_params->extra_flag = 0x04;
+        ipv4_hash_params->extra_flag = 0;
         snprintf(tbl_name, sizeof(name) + 1, "%s", name);
         printf("Name: %s\n", tbl_name);
 
@@ -409,20 +386,22 @@ static int init_lb_maps(struct onvm_nf *nf) {
         tcp_lb_hash_maps = rte_malloc(NULL, sizeof(struct tcp_lb_maps), 0);
         tcp_lb_hash_maps->total_connections = 0;
 
-        //ret = create_rtehashmap(flow_map_name, MAX_FLOWS, sizeof(union ipv4_5tuple_host));
-//        if (ret < 0) {
-//                printf("Creating hashmap failed\n");
-//                exit(0);
-//        }
+        int ret = create_rtehashmap(flow_map_name, 10, sizeof(union ipv4_5tuple_host));
+        if (ret < 0) {
+                printf("Creating hashmap failed\n");
+                exit(0);
+        }
 
-//        union ipv4_5tuple_host newkey;
-//        void *lkup;
-//
-//        newkey.ip_dst = 500;
-//        newkey.ip_src = 500;
-//        newkey.port_dst = 11;
-//        newkey.port_src = 10;
-//        printf("Socket ID %d\n", rte_socket_id());
+//        flow_table = onvm_ft_create(256, sizeof(struct flow_meta));
+        printf("%p\n", sdn_ft);
+
+        union ipv4_5tuple_host newkey;
+        void *lkup;
+
+        newkey.ip_dst = 500;
+        newkey.ip_src = 500;
+        newkey.port_dst = 11;
+        newkey.port_src = 10;
 //
         flow_map = rte_hash_find_existing(flow_map_name);
         printf("Did flow_map lookup\n");
@@ -434,7 +413,7 @@ static int init_lb_maps(struct onvm_nf *nf) {
                 printf("FM addr: %p\n", flow_map);
         }
 //
-//        rte_hash_lookup_data(flow_map, (void *) &newkey, &lkup);
+        rte_hash_lookup_data(flow_map, (void *) &newkey, &lkup);
 
         tcp_lb_hash_maps->global_flow_meta_freelist = rte_ring_create(global_flow_meta_freelist, MAX_FLOWS,
                 rte_socket_id(), RING_F_SP_ENQ | RING_F_SC_DEQ);
@@ -447,6 +426,7 @@ static int init_lb_maps(struct onvm_nf *nf) {
         // TODO: allow user to input this next step it should be a loop in which the static chain is constructured
 
         default_service_chain[0] = &nfs[3]; // ID 3 is
+        default_service_chain_id[0] = 3;
 
         printf("We are here\n");
 
@@ -500,6 +480,8 @@ main(int argc, char *argv[]) {
         cur_cycles = rte_get_tsc_cycles();
         last_cycle = rte_get_tsc_cycles();
         init_lb_maps(nf_local_ctx->nf);
+
+        onvm_flow_dir_nf_init();
 
         onvm_nflib_run(nf_local_ctx);
 
