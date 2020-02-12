@@ -49,9 +49,8 @@
 #include <sys/queue.h>
 #include <unistd.h>
 
-#include <rte_common.h>
-#include <rte_ip.h>
-#include <rte_mbuf.h>
+#include <rte_malloc.h>
+#include <rte_hash.h>
 
 #include "onvm_nflib.h"
 #include "onvm_pkt_helper.h"
@@ -64,7 +63,12 @@ static uint32_t print_delay = 1000000;
 
 static uint32_t destination;
 
-struct rte_hash *flow_map;
+struct rte_hash *flow_map_obj;
+struct packet_tuple {
+        uint32_t ip_src;
+        uint32_t ip_dst;
+};
+
 
 /*
  * Print a usage message
@@ -162,37 +166,31 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
                 counter = 0;
         }
 
-#if LOAD_BALANCE_ENABLED
-        union ipv4_5tuple_host newkey;
-        struct tcp_hdr *tcp_hdr;
-        struct ipv4_hdr *ipv4_hdr;
-        void *flow_meta_value;
-        struct flow_meta *flow_meta_lkup;
-        struct rte_hash *flow_map;
-        flow_map = rte_hash_find_existing(flow_map_name);
-        printf("Address: %p", flow_map);
-
-
-        ipv4_hdr = onvm_pkt_ipv4_hdr(pkt);
-        tcp_hdr = onvm_pkt_tcp_hdr(pkt);
-
-        newkey.ip_dst = rte_cpu_to_be_32(ipv4_hdr->dst_addr);
-        newkey.ip_src = rte_cpu_to_be_32(ipv4_hdr->src_addr);
-        newkey.port_dst = rte_cpu_to_be_16(tcp_hdr->dst_port);
-        newkey.port_src = rte_cpu_to_be_16(tcp_hdr->src_port);
-        int hash_ret = rte_hash_lookup_data(flow_map, (void *) &newkey, &flow_meta_value);
-        flow_meta_lkup = (struct flow_meta *) flow_meta_value;
-        printf("Hash ret: %d\n", hash_ret);
-        if (hash_ret < 0) {
-                printf("Could not find hash\n");
-                goto _no_lb;
-        }
-        printf("Flow lkup: %s\n", flow_meta_lkup->service_chain[0]->tag);
+//
+//        union ipv4_5tuple_host newkey;
+//        struct tcp_hdr *tcp_hdr;
+//        struct ipv4_hdr *ipv4_hdr;
+//        void *flow_meta_value;
+//        struct flow_meta *flow_meta_lkup;
+//
+//        ipv4_hdr = onvm_pkt_ipv4_hdr(pkt);
+//        tcp_hdr = onvm_pkt_tcp_hdr(pkt);
+//
+//        newkey.ip_dst = rte_cpu_to_be_32(ipv4_hdr->dst_addr);
+//        newkey.ip_src = rte_cpu_to_be_32(ipv4_hdr->src_addr);
+//        newkey.port_dst = rte_cpu_to_be_16(tcp_hdr->dst_port);
+//        newkey.port_src = rte_cpu_to_be_16(tcp_hdr->src_port);
+//        int hash_ret = rte_hash_lookup_data(flow_map_obj, (void *) &newkey, &flow_meta_value);
+//        flow_meta_lkup = (struct flow_meta *) flow_meta_value;
+//        if (hash_ret < 0) {
+//                printf("Could not find hash\n");
+//        }
+//        printf("Flow lkup: %s\n", flow_meta_lkup->service_chain[0]->tag);
         meta->action = ONVM_NF_ACTION_TONF;
         meta->destination = 2;
         return 0;
-#endif
-_no_lb:
+
+
         meta->action = ONVM_NF_ACTION_OUT;
         meta->destination = 0;
 
@@ -231,6 +229,26 @@ main(int argc, char *argv[]) {
                 rte_exit(EXIT_FAILURE, "Invalid command-line arguments\n");
         }
 
+        flow_map_obj = rte_hash_find_existing(flow_map_name);
+        if (flow_map_obj == NULL) {
+                printf("Could not find flow map\n");
+                exit(0);
+        }
+        //void *flow_meta_lkup;
+
+        union ipv4_5tuple_host newkey;
+
+        newkey.ip_dst = 500;
+        newkey.ip_src = 500;
+        newkey.port_dst = 11;
+        newkey.port_src = 10;
+
+        printf("Flow map: %p\n", flow_map_obj);
+        printf("Count: %d\n", rte_hash_count(flow_map_obj));
+        sleep(1);
+        int ret = rte_hash_lookup(flow_map_obj, (void *) &newkey);
+        printf("ret %d\n", ret);
+        //rte_hash_lookup_data(flow_map_obj, (void *) &newkey, &flow_meta_lkup);
 
         onvm_nflib_run(nf_local_ctx);
 

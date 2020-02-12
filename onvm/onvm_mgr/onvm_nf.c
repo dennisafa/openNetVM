@@ -444,6 +444,7 @@ onvm_nf_init_ft(struct ft_request *ft) {
 
         hash = rte_hash_create(ft->ipv4_hash_params);
         if (hash) {
+                printf("Created flow table\n");
                 ft->status = 0;
         } else {
                 ft->status = -1;

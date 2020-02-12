@@ -48,7 +48,7 @@
 #include <string.h>
 #include <sys/queue.h>
 #include <unistd.h>
-#include<sys/wait.h>
+#include <sys/wait.h>
 
 #include <rte_common.h>
 #include <rte_cycles.h>
@@ -91,6 +91,9 @@ static uint32_t print_delay = 1000000;
 static uint32_t total_packets = 0;
 static uint64_t last_cycle;
 static uint64_t cur_cycles;
+
+int create_rtehashmap(const char *name, int entries, size_t key_len);
+struct rte_hash *flow_map;
 
 /* shared data structure containing host port info */
 extern struct port_info *ports;
@@ -206,10 +209,8 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, struct onvm_nf_
         struct rte_ring *global_flow_meta_freelist;
         struct flow_meta *current_flow_meta;
         struct onvm_nf *nf;
-        struct rte_hash *flow_map;
 
         tcp_lb_hash_maps = (struct tcp_lb_maps *) nf_local_ctx->nf->data;
-        flow_map = tcp_lb_hash_maps->flow_map;
 
 
         if (!onvm_pkt_is_tcp(pkt) || !onvm_pkt_is_ipv4(pkt)) {
@@ -228,6 +229,7 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, struct onvm_nf_
         newkey.ip_src = rte_cpu_to_be_32(ipv4_hdr->src_addr);
         newkey.port_dst = rte_cpu_to_be_16(tcp_hdr->dst_port);
         newkey.port_src = rte_cpu_to_be_16(tcp_hdr->src_port);
+        printf("Perf lookup\n\n\n");
 
 
         flags = ((tcp_hdr->data_off << 8) | tcp_hdr->tcp_flags) & 0b111111111;
@@ -276,7 +278,7 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, struct onvm_nf_
 //        }
 
         meta->action = ONVM_NF_ACTION_TONF; // otherwise we have a scaled nf so send it to that
-        meta->destination = dest;
+        meta->destination = 2;
 
         return 0;
 
@@ -351,20 +353,29 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, struct onvm_nf_
         return 0;
 }
 
-static struct rte_hash *
+int
 create_rtehashmap(const char *name, int entries, size_t key_len) {
-        struct rte_hash_parameters hash_map_params;
-        printf("%s\n", name);
+        struct rte_hash_parameters *ipv4_hash_params;
 
-        hash_map_params.name = name;
-        hash_map_params.entries = entries;
-        hash_map_params.reserved = 0;
-        hash_map_params.key_len = key_len; // Default is an int key
-        hash_map_params.hash_func = rte_jhash; // Default is the jhash method, this can be changed if needed
-        hash_map_params.socket_id = rte_socket_id();
-        hash_map_params.extra_flag = 0;
+        ipv4_hash_params = (struct rte_hash_parameters *) rte_malloc(NULL, sizeof(struct rte_hash_parameters), 0);
+        if (!ipv4_hash_params) {
+                return -1;
+        }
 
-        return rte_hash_create(&hash_map_params);
+        char *tbl_name = rte_malloc(NULL, sizeof(name) + 1, 0);
+        /* create ipv4 hash table. use core number and cycle counter to get a unique name. */
+        ipv4_hash_params->entries = entries;
+        ipv4_hash_params->key_len = key_len;
+        ipv4_hash_params->hash_func = rte_jhash;
+        ipv4_hash_params->hash_func_init_val = 0;
+        ipv4_hash_params->name = tbl_name;
+        ipv4_hash_params->socket_id = rte_socket_id();
+        ipv4_hash_params->extra_flag = 0x04;
+        snprintf(tbl_name, sizeof(name) + 1, "%s", name);
+        printf("Name: %s\n", tbl_name);
+
+
+        return onvm_nflib_request_ft(ipv4_hash_params);
 }
 
 static int init_lb_maps(struct onvm_nf *nf) {
@@ -375,19 +386,15 @@ static int init_lb_maps(struct onvm_nf *nf) {
         scale_tag = rte_malloc(NULL, 20, 0);
         strncpy(scale_tag, scale_tag_cpy, 20);
 
-        printf("start here\n");
-
         for (i = 0; i < MAX_FLOWS; i++) {
                 global_flow_meta[i] = (struct flow_meta *) rte_malloc(NULL, sizeof(struct flow_meta), 0);
                 global_flow_meta[i]->service_chain = (struct onvm_nf **) rte_malloc(NULL,
                                                                                     sizeof(struct onvm_nf *) * MAX_CHAINS, 0);
                 for (j = 0; j < MAX_CHAINS; j++) {
-                        global_flow_meta[i]->service_chain[j] = rte_malloc(NULL, sizeof(struct onvm_nf), 0);
+                        global_flow_meta[i]->service_chain[j] = (struct onvm_nf *) rte_malloc(NULL, sizeof(struct onvm_nf), 0);
                 }
                 global_flow_meta[i]->global_flow_id = -1;
         }
-
-        printf("PAst here\n");
 
         default_service_chain = (struct onvm_nf **) rte_malloc(NULL,
                                                                sizeof(struct onvm_nf *) * MAX_CHAINS, 0);
@@ -401,24 +408,33 @@ static int init_lb_maps(struct onvm_nf *nf) {
 
         tcp_lb_hash_maps = rte_malloc(NULL, sizeof(struct tcp_lb_maps), 0);
         tcp_lb_hash_maps->total_connections = 0;
-        tcp_lb_hash_maps->chain_connections = create_rtehashmap(chain_to_connections,
-                                                                MAX_CHAINS, sizeof(int)); // 10 service chains (for now)
-        tcp_lb_hash_maps->ip_chain = create_rtehashmap(ip_map, 1000, sizeof(int)); // 1000 different IP addresses
 
-        tcp_lb_hash_maps->flow_map = create_rtehashmap(flow_map_name, MAX_FLOWS, sizeof(union ipv4_5tuple_host));
+        //ret = create_rtehashmap(flow_map_name, MAX_FLOWS, sizeof(union ipv4_5tuple_host));
+//        if (ret < 0) {
+//                printf("Creating hashmap failed\n");
+//                exit(0);
+//        }
 
-        tcp_lb_hash_maps->chain_meta_list = rte_malloc(NULL, sizeof(struct chain_meta *) * MAX_CHAINS, 0);
-        tcp_lb_hash_maps->chain_meta_list[0] = rte_malloc(NULL, sizeof(struct chain_meta), 0);
-        tcp_lb_hash_maps->chain_meta_list[0]->chain_id[0] = 3; // First entry in scaled NF's array
-        tcp_lb_hash_maps->chain_meta_list[0]->num_connections = 0; // Number of TCP connections
-        tcp_lb_hash_maps->chain_meta_list[0]->scaled_nfs = 1; // Starting off with 1 spawned NF
-        tcp_lb_hash_maps->list_size = MAX_CHAINS;
-        for (i = 1; i < MAX_CHAINS; i++) {
-                tcp_lb_hash_maps->chain_meta_list[i] = rte_malloc(NULL, sizeof(struct chain_meta), 0);
-                tcp_lb_hash_maps->chain_meta_list[i]->scaled_nfs = 0;
-                tcp_lb_hash_maps->chain_meta_list[i]->num_packets = 0;
-                tcp_lb_hash_maps->chain_meta_list[i]->num_connections = 0;
+//        union ipv4_5tuple_host newkey;
+//        void *lkup;
+//
+//        newkey.ip_dst = 500;
+//        newkey.ip_src = 500;
+//        newkey.port_dst = 11;
+//        newkey.port_src = 10;
+//        printf("Socket ID %d\n", rte_socket_id());
+//
+        flow_map = rte_hash_find_existing(flow_map_name);
+        printf("Did flow_map lookup\n");
+        if (flow_map == NULL) {
+                printf("Could not find map\n");
+                //exit(0);
         }
+        else {
+                printf("FM addr: %p\n", flow_map);
+        }
+//
+//        rte_hash_lookup_data(flow_map, (void *) &newkey, &lkup);
 
         tcp_lb_hash_maps->global_flow_meta_freelist = rte_ring_create(global_flow_meta_freelist, MAX_FLOWS,
                 rte_socket_id(), RING_F_SP_ENQ | RING_F_SC_DEQ);
@@ -483,7 +499,6 @@ main(int argc, char *argv[]) {
 
         cur_cycles = rte_get_tsc_cycles();
         last_cycle = rte_get_tsc_cycles();
-
         init_lb_maps(nf_local_ctx->nf);
 
         onvm_nflib_run(nf_local_ctx);

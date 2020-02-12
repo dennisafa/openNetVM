@@ -31,7 +31,6 @@ struct tcp_lb_maps {
         struct chain_meta **chain_meta_list;
         int list_size;
         int total_connections;
-        struct rte_hash *flow_map;
 };
 
 #endif //SD_ONVM_LOAD_BALANCE_H
