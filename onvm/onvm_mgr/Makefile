@@ -36,7 +36,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 # set this to 0 to disable flow table lookup for incoming packets
-ENABLE_FLOW_LOOKUP=1
+ENABLE_FLOW_LOOKUP=0
 
 ifeq ($(RTE_SDK),)
 $(error "Please define RTE_SDK environment variable")

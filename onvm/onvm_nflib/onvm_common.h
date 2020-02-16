@@ -69,6 +69,9 @@
 #define MAX_SERVICES 32          // total number of unique services allowed
 #define MAX_NFS_PER_SERVICE 32   // max number of NFs per service.
 
+#define ONVM_NF_STATELESS 64
+#define ONVM_NF_STATEFUL 65
+
 #define NUM_MBUFS 32767          // total number of mbufs (2^15 - 1)
 #define NF_QUEUE_RINGSIZE 16384  // size of queue for NFs
 
@@ -273,7 +276,11 @@ struct onvm_nf {
         uint16_t instance_id;
         uint16_t service_id;
         uint16_t num_flows;
+        uint8_t num_duplicated;
+        uint16_t destination_dup[ONVM_MAX_CHAIN_LENGTH];
+        uint64_t time_since_scale;
         uint8_t status;
+        uint8_t state;
         char *tag;
         /* Pointer to NF defined state data */
         void *data;
@@ -358,8 +365,12 @@ struct onvm_nf_init_cfg {
  * Define a structure to describe a service chain entry
  */
 struct onvm_service_chain_entry {
+        uint64_t num_packets;
         uint16_t destination;
+        uint16_t destination_dup[ONVM_MAX_CHAIN_LENGTH];
         uint8_t action;
+        uint8_t is_duplicated;
+        uint8_t num_duplicated;
 };
 
 struct onvm_service_chain {

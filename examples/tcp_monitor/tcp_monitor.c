@@ -81,6 +81,7 @@ static struct flow_meta *global_flow_meta[MAX_FLOWS];
 
 int default_service_chain_id[MAX_CHAINS];
 int chain_length = 1;
+int next_service_id = 4;
 
 // Used for flow hashing
 #define BYTE_VALUE_MAX 256
@@ -199,6 +200,9 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
         struct chain_meta *lkup_chain_meta;
         int fd_ret;
         int dest;
+        int num_duplicated;
+        int dup_index;
+
         struct onvm_flow_entry *flow_entry = NULL;
         struct onvm_service_chain *sc;
         struct tcp_hdr *tcp_hdr;
@@ -226,29 +230,106 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
                 onvm_flow_dir_add_pkt(pkt, &flow_entry);
                 memset(flow_entry, 0, sizeof(struct onvm_flow_entry));
                 flow_entry->sc = onvm_sc_create();
+                sc = flow_entry->sc;
 
-                for (int i = 0; i < chain_length; i++) {
-                        next_dest_id = default_service_chain_id[i];
+                for (int i = 1; i < chain_length + 1; i++) {
+                        next_dest_id = default_service_chain_id[i-1];
                         nf = &nfs[next_dest_id];
-                        if (nf->resource_usage.cpu_time_proportion > 0.8) {
-                                printf("Nf is overflowing, CPU\n");
-                                printf("NF: %s\n", nf->tag);
-                                printf("Need to scale NF %d\n", nf->service_id);
+                        if (nf->resource_usage.cpu_time_proportion > 0.3) {
+//                                printf("Nf is overflowing, CPU\n");
+//                                printf("NF: %s\n", nf->tag);
+                                switch (nf->state)
+                                {
+                                        case ONVM_NF_STATEFUL:
+                                                printf("Stateful NF balancing\n");
+                                                break;
+                                        default:
+                                                onvm_sc_append_entry(flow_entry->sc, ONVM_NF_ACTION_TONF, default_service_chain_id[i-1]);
+                                                printf("Neither stateful nor stateless\n");
+                                                break;
+                                }
+                                //onvm_nflib_fork(nf->tag, 2, next_id);
 
                         } else {
-                                onvm_sc_append_entry(flow_entry->sc, ONVM_NF_ACTION_TONF, default_service_chain_id[i]);
+                                onvm_sc_append_entry(flow_entry->sc, ONVM_NF_ACTION_TONF, default_service_chain_id[i-1]);
                         }
                 }
-
-                sc = flow_entry->sc;
                 dest = default_service_chain_id[0];
         }
         else {
                 //printf("Flow found\n");
                 sc = flow_entry->sc;
-                dest = sc->sc[0].destination;
         }
 
+        for (int i = 1; i < chain_length + 1; i++) {
+                dest = sc->sc[i].destination;
+                nf = &nfs[dest];
+                if (nf->resource_usage.cpu_time_proportion > 0.3) {
+                        switch (nf->state)
+                        {
+                                case ONVM_NF_STATELESS:
+//                                        printf("Stateless NF balancing\n");
+                                        num_duplicated = nf->num_duplicated;
+
+                                        if (num_duplicated > 1) { // If the flow is coming in and the original is overloaded, spread across dups
+                                                for (int j = 0; j < num_duplicated; j++) {
+                                                        sc->sc[i].destination_dup[j] = nf->destination_dup[j];
+                                                }
+                                                sc->sc[i].is_duplicated = 1;
+                                                sc->sc[i].num_duplicated = num_duplicated;
+                                                //printf("Num duplicated: %d\n", num_duplicated);
+                                        }
+
+                                        // But if it's been more than 5 secs and the duplicates arent taking the load off
+                                        // then spawn another one and add it
+
+                                        // Copy nf dup array into current duplicated service chain array
+                                        if ((rte_get_tsc_cycles() - nf->time_since_scale) * TIME_TTL_MULTIPLIER /
+                                                                     rte_get_timer_hz() < 5) {
+                                                //printf("Time to live exceeded, shutting down\n");
+                                                break;
+                                        }
+
+                                        if (num_duplicated == ONVM_MAX_CHAIN_LENGTH) {
+                                                //printf("Maximum duplications\n");
+                                                break;
+                                        }
+
+                                        onvm_nflib_fork(nf->tag, 2, next_service_id);
+                                        nf->time_since_scale = rte_get_tsc_cycles();
+                                        sc->sc[i].is_duplicated = 1;
+                                        nf->num_duplicated++;
+                                        nf->destination_dup[nf->num_duplicated - 1] = next_service_id; // 4 is the id of the new duplicated NF
+                                        next_service_id++;
+
+                                        for (int j = 0; j < nf->num_duplicated; j++) {
+                                                sc->sc[i].destination_dup[j] = nf->destination_dup[j];
+                                        }
+
+                                        sc->sc[i].num_duplicated = nf->num_duplicated;
+                                        break;
+                                case ONVM_NF_STATEFUL:
+                                        printf("Stateful NF balancing\n");
+                                        break;
+                                default:
+                                        //onvm_sc_append_entry(flow_entry->sc, ONVM_NF_ACTION_TONF, default_service_chain_id[i-1]);
+                                        printf("Neither stateful nor stateless: %s\n", nf->tag);
+                                        break;
+                        }
+                }
+        }
+
+        sc->sc[1].num_packets++;
+        if (sc->sc[1].is_duplicated == 1) {
+                //printf("Num dup: %d\n", sc->sc[1].num_duplicated);
+                dup_index = sc->sc[1].num_packets % sc->sc[1].num_duplicated;
+                //printf("Num_duplicated %d\n", sc->sc[1].num_duplicated);
+                //printf("Num_packets %ld\n", sc->sc[1].num_packets);
+                dest = sc->sc[1].destination_dup[dup_index];
+
+        } else {
+                dest = sc->sc[1].destination;
+        }
         nf = &nfs[default_service_chain_id[0]];
         if ((flags >> 1) & 0x1) { // SYN so add connection count to service chain
                 nf->num_flows++;
@@ -269,6 +350,7 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
 //                printf("FIN, killing %d\n", to_kill);
 //        }
 
+        //printf("Destination = %d\n", dest);
         meta->action = ONVM_NF_ACTION_TONF; // otherwise we have a scaled nf so send it to that
         meta->destination = dest;
 

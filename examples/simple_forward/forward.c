@@ -165,7 +165,11 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
                 do_stats_display(pkt);
                 counter = 0;
         }
-
+//        int fd_ret;
+//
+//        struct onvm_flow_entry *flow_entry = NULL;
+//        //struct onvm_service_chain *sc;
+//        fd_ret = onvm_flow_dir_get_pkt(pkt, &flow_entry);
 //
 //        union ipv4_5tuple_host newkey;
 //        struct tcp_hdr *tcp_hdr;
@@ -220,6 +224,7 @@ main(int argc, char *argv[]) {
                         rte_exit(EXIT_FAILURE, "Failed ONVM init\n");
                 }
         }
+        nf_local_ctx->nf->state = ONVM_NF_STATELESS;
 
         argc -= arg_offset;
         argv += arg_offset;
@@ -228,6 +233,7 @@ main(int argc, char *argv[]) {
                 onvm_nflib_stop(nf_local_ctx);
                 rte_exit(EXIT_FAILURE, "Invalid command-line arguments\n");
         }
+        onvm_flow_dir_nf_init();
 
         onvm_nflib_run(nf_local_ctx);
         onvm_nflib_stop(nf_local_ctx);
