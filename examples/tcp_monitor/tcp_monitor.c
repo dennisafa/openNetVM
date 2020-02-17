@@ -88,6 +88,8 @@ int next_service_id = 4;
 #define ALL_32_BITS 0xffffffff
 #define BIT_8_TO_15 0x0000ff00
 
+#define CPU_MAX 0.24
+
 
 /* number of package between each print */
 static uint32_t print_delay = 1000000;
@@ -144,42 +146,6 @@ parse_app_args(int argc, char *argv[], const char *progname) {
         return optind;
 }
 
-/*
- * This function displays stats. It uses ANSI terminal codes to clear
- * screen when called. It is called from a single non-master
- * thread in the server process, when the process is run with more
- * than one lcore enabled.
- */
-static void
-do_stats_display(struct rte_mbuf *pkt) {
-        const char clr[] = {27, '[', '2', 'J', '\0'};
-        const char topLeft[] = {27, '[', '1', ';', '1', 'H', '\0'};
-        static uint64_t pkt_process = 0;
-        struct ipv4_hdr *ip;
-
-        pkt_process += print_delay;
-
-        /* Clear screen and move to top left */
-        printf("%s%s", clr, topLeft);
-
-        printf("PACKETS\n");
-        printf("-----\n");
-        printf("Port : %d\n", pkt->port);
-        printf("Size : %d\n", pkt->pkt_len);
-        printf("Hash : %u\n", pkt->hash.rss);
-        printf("N°   : %"
-        PRIu64
-        "\n", pkt_process);
-        printf("\n\n");
-
-        ip = onvm_pkt_ipv4_hdr(pkt);
-        if (ip != NULL) {
-                onvm_pkt_print(pkt);
-        } else {
-                printf("No IP4 header found\n");
-        }
-}
-
 static int
 callback_handler(__attribute__((unused)) struct onvm_nf_local_ctx *nf_local_ctx) {
         cur_cycles = rte_get_tsc_cycles();
@@ -197,18 +163,18 @@ callback_handler(__attribute__((unused)) struct onvm_nf_local_ctx *nf_local_ctx)
 
 static int
 packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((unused)) struct onvm_nf_local_ctx *nf_local_ctx) {
-        struct chain_meta *lkup_chain_meta;
         int fd_ret;
         int dest;
         int num_duplicated;
         int dup_index;
+        int dups_killed;
 
         struct onvm_flow_entry *flow_entry = NULL;
         struct onvm_service_chain *sc;
         struct tcp_hdr *tcp_hdr;
 
         uint16_t flags = 0;
-        static uint32_t counter = 0;
+        dups_killed = 0;
 
         struct onvm_nf *nf;
         int next_dest_id;
@@ -225,7 +191,7 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
         flags = ((tcp_hdr->data_off << 8) | tcp_hdr->tcp_flags) & 0b111111111;
 
         fd_ret = onvm_flow_dir_get_pkt(pkt, &flow_entry);
-        if (fd_ret < 0 && (flags >> 1) & 0x1) {
+        if (fd_ret < 0) {
                 //printf("New flow\n");
                 onvm_flow_dir_add_pkt(pkt, &flow_entry);
                 memset(flow_entry, 0, sizeof(struct onvm_flow_entry));
@@ -235,7 +201,7 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
                 for (int i = 1; i < chain_length + 1; i++) {
                         next_dest_id = default_service_chain_id[i-1];
                         nf = &nfs[next_dest_id];
-                        if (nf->resource_usage.cpu_time_proportion > 0.3) {
+                        if (nf->resource_usage.cpu_time_proportion > CPU_MAX) {
 //                                printf("Nf is overflowing, CPU\n");
 //                                printf("NF: %s\n", nf->tag);
                                 switch (nf->state)
@@ -264,7 +230,7 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
         for (int i = 1; i < chain_length + 1; i++) {
                 dest = sc->sc[i].destination;
                 nf = &nfs[dest];
-                if (nf->resource_usage.cpu_time_proportion > 0.3) {
+                if (nf->resource_usage.cpu_time_proportion > CPU_MAX) {
                         switch (nf->state)
                         {
                                 case ONVM_NF_STATELESS:
@@ -285,12 +251,12 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
 
                                         // Copy nf dup array into current duplicated service chain array
                                         if ((rte_get_tsc_cycles() - nf->time_since_scale) * TIME_TTL_MULTIPLIER /
-                                                                     rte_get_timer_hz() < 5) {
+                                                                     rte_get_timer_hz() < 10) {
                                                 //printf("Time to live exceeded, shutting down\n");
                                                 break;
                                         }
 
-                                        if (num_duplicated == ONVM_MAX_CHAIN_LENGTH) {
+                                        if (num_duplicated == ONVM_MAX_CHAIN_LENGTH - 1) {
                                                 //printf("Maximum duplications\n");
                                                 break;
                                         }
@@ -333,13 +299,33 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
         nf = &nfs[default_service_chain_id[0]];
         if ((flags >> 1) & 0x1) { // SYN so add connection count to service chain
                 nf->num_flows++;
-                printf("Number of flows: %d\n", nf->num_flows);
+                printf("Number of flows: %d\n",  nf->num_flows);
         }
 
         // TODO subtract and add flows from all NF's
-        if (flags & 0x1) { // SYN so add connection count to service chain
+        if (flags & 0x1) { // FIN so add connection count to service chain
                 nf->num_flows--;
-                printf("Number of flows: %d\n", nf->num_flows);
+                for (int i = 1; i < chain_length + 1; i++) {
+                        if (nf->num_flows == 0) {
+                                printf("Number of flows is 0\n");
+                                if (sc->sc[i].is_duplicated == 1) {
+                                        num_duplicated = sc->sc[i].num_duplicated;
+                                        for (int j = 1; j < num_duplicated; j++) {
+                                                int dst_instance_id = onvm_sc_service_to_nf_map(sc->sc[i].destination_dup[j], pkt);
+                                                onvm_nflib_send_kill_msg(dst_instance_id);
+                                                printf("Killing %d\n\n", sc->sc[i].destination_dup[j]);
+                                                sc->sc[i].num_duplicated--;
+                                                nf->num_duplicated--;
+                                                sc->sc[i].destination_dup[j] = 0;
+                                                next_service_id--;
+                                        }
+                                        //onvm_nflib_send_kill_msg(dest);
+                                }
+                                dups_killed = 1;
+                        }
+//                        printf("Number of flows: %ld\n",  sc->sc[i].num_flows);
+                }
+                printf("Number of flows: %d\n",  nf->num_flows);
         }
 
         // If the nf is stateless, and if the CPU usage is above certain percentage, make it alternate sending across
@@ -351,78 +337,12 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
 //        }
 
         //printf("Destination = %d\n", dest);
-        meta->action = ONVM_NF_ACTION_TONF; // otherwise we have a scaled nf so send it to that
-        meta->destination = dest;
-
-        return 0;
-
-        //nf = default_service_chain[0];
-
-        // To dealloc- if there are no more flows going to that NF
-
-        // Check if this IP is attached to service chain
-        // If new IP comes in, map to service chain with least amount of connections. First one is default to 3
-//        if (rte_hash_lookup_data(ip_chain, &ip_addr_long, &chain_meta_data) < 0) {
-//                //new_chain_meta = rte_malloc(NULL, sizeof(struct chain_meta), 0);
-//                printf("Attaching IP to chain with least connections\n");
-//                index = 0;
-//                min = chain_meta_list[index]->num_connections;
-//                for (i = index + 1; i < tcp_lb_hash_maps->list_size; i++) {
-//                        if (chain_meta_list[i]->num_connections < min) {
-//                                index = i;
-//                                min = chain_meta_list[i]->num_connections;
-//                        }
-//                }
-//
-//                lkup_chain_meta = (struct chain_meta *) chain_meta_list[index];
-//                lkup_chain_meta->num_packets = 0;
-//                rte_hash_add_key_data(ip_chain, &ip_addr_long, (void *) lkup_chain_meta);
-//        } else {
-//                lkup_chain_meta = (struct chain_meta *) chain_meta_data;
-//                min = lkup_chain_meta->num_connections / lkup_chain_meta->scaled_nfs;
-//                printf("Min: %d\n", min);
-//                printf("Num connections: %d scaled nfs: %d\n", lkup_chain_meta->num_connections,
-//                       lkup_chain_meta->scaled_nfs);
-//                if (min >= MAX_CONNECTIONS) {
-//                        printf("Hit the maximum amount of connections, scaling\n");
-//                        lkup_chain_meta->scaled_nfs++;
-//                        next_id = ++tcp_lb_hash_maps->total_connections;
-//                        pid_t saved_pid = onvm_nflib_fork("simple_forward", 2, next_id);
-//                        //lkup_chain_meta->scaled_nfs
-//                        // TODO: Scale here
-//                        /* Each IP gets meta_chain index in bucket, each IP gets list of NF's it may scale to.
-//                         I.E 4 connections from one IP, max connections is 2.
-//                         2 of the connections get sent to chain ID 1, the other two get sent to chain ID 2.
-//                         We need to spawn the new chain and put the ID into the array
-//                         This could be a message sent to other process that scales for us
-//                         */
-//
-//                        scaled_nfs = lkup_chain_meta->scaled_nfs; // place holder
-//                        printf("Scaled nfs val: %d\n", scaled_nfs);
-//                        lkup_chain_meta->chain_id[scaled_nfs - 1] =
-//                                next_id; // first two are mtcp and balancer
-//                        lkup_chain_meta->pid_list[0] = saved_pid;
-//
-//                        printf("Meta dest ID %d\n", lkup_chain_meta->dest_id);
-//                        printf("Meta dest ID %d\n", lkup_chain_meta->dest_id);
-//                }
-//
-//        }
-
-
-
-        total_packets++;
-        if (++counter == print_delay) {
-                do_stats_display(pkt);
-                counter = 0;
+        if (dups_killed == 1) {
+                dest = sc->sc[1].destination;
         }
 
-        lkup_chain_meta->num_packets++;
-        lkup_chain_meta->dest_id = lkup_chain_meta->chain_id[lkup_chain_meta->num_packets %
-                                                             lkup_chain_meta->scaled_nfs];
         meta->action = ONVM_NF_ACTION_TONF; // otherwise we have a scaled nf so send it to that
-        meta->destination = lkup_chain_meta->dest_id;
-        usleep(1);
+        meta->destination = dest;
 
         return 0;
 }

@@ -894,10 +894,30 @@ onvm_nflib_fork(const char *nf_app_dir, int host_sid, int sid) {
         // Also not sure why we need three "--" arguments but that's whatever.
         int new_nf_id;
         new_nf_id = fork();
+        const char *nf_dir_onvm = "/users/dennisa/openNetVM/examples/";
+        const char *build_dir = "/build/app/";
         if (new_nf_id == 0) {
                 int bufsz = 8;
+                int onvm_dirsz = strlen(nf_dir_onvm) + 1;
+                int onvm_buildsz = strlen(build_dir) + 1;
+                int total_dirsz = onvm_buildsz + onvm_dirsz + (strlen(nf_app_dir) * 2) + 1; // 34 is /users/... 11 is /build/app..
                 char sid_str[bufsz];
                 char host_sid_str[bufsz];
+                char nf_str[total_dirsz];
+
+                snprintf(nf_str, onvm_dirsz, "%s", nf_dir_onvm);
+                printf("Final str: %s\n", nf_str);
+
+                strncat(nf_str, nf_app_dir, strlen(nf_app_dir));
+                printf("Final str: %s\n", nf_str);
+
+                strncat(nf_str, build_dir, strlen(build_dir));
+                printf("Final str: %s\n", nf_str);
+
+                strncat(nf_str, nf_app_dir, strlen(nf_app_dir));
+                printf("Final str: %s\n", nf_str);
+
+
                 if (snprintf(sid_str, bufsz, "%d", sid) >= bufsz) {
                         printf("Fork error: SID has too many digits!\n");
                         return -1;
@@ -908,7 +928,7 @@ onvm_nflib_fork(const char *nf_app_dir, int host_sid, int sid) {
 
                 char *_nf_app_dir = strdup(nf_app_dir);
                 printf("%s", _nf_app_dir);
-                int err = execl("/users/dennisa/openNetVM/examples/simple_forward/build/app/simple_forward", "-n", "3",
+                int err = execl(nf_str, "-n", "3",
                                 "--proc-type=secondary", "--", "-s", "-r", sid_str, "--", "-d", "1", NULL);
                 // If we reach here, an error has occurred.
                 printf("fork() returned an error: %d\n", err);
@@ -917,8 +937,6 @@ onvm_nflib_fork(const char *nf_app_dir, int host_sid, int sid) {
                 printf("Spawned a new instance of the app at \"%s\".\n", nf_app_dir);
                 return new_nf_id;
         }
-
-        return 0;
 }
 
 /******************************Helper functions*******************************/

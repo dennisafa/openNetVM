@@ -366,6 +366,7 @@ struct onvm_nf_init_cfg {
  */
 struct onvm_service_chain_entry {
         uint64_t num_packets;
+        uint64_t num_flows;
         uint16_t destination;
         uint16_t destination_dup[ONVM_MAX_CHAIN_LENGTH];
         uint8_t action;

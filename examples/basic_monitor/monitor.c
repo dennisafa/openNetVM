@@ -167,12 +167,12 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
                 counter = 0;
         }
 
-        meta->action = ONVM_NF_ACTION_OUT;
-        meta->destination = pkt->port;
+        meta->action = ONVM_NF_ACTION_TONF;
+        meta->destination = 2;
 
-        if (onvm_pkt_swap_src_mac_addr(pkt, meta->destination, ports) != 0) {
-                RTE_LOG(INFO, APP, "ERROR: Failed to swap src mac with dst mac!\n");
-        }
+//        if (onvm_pkt_swap_src_mac_addr(pkt, meta->destination, ports) != 0) {
+//                RTE_LOG(INFO, APP, "ERROR: Failed to swap src mac with dst mac!\n");
+//        }
         return 0;
 }
 
@@ -207,6 +207,7 @@ main(int argc, char *argv[]) {
                 onvm_nflib_stop(nf_local_ctx);
                 rte_exit(EXIT_FAILURE, "Invalid command-line arguments\n");
         }
+        nf_local_ctx->nf->state = ONVM_NF_STATELESS;
 
         cur_cycles = rte_get_tsc_cycles();
         last_cycle = rte_get_tsc_cycles();
