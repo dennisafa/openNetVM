@@ -81,14 +81,14 @@ static struct flow_meta *global_flow_meta[MAX_FLOWS];
 
 int default_service_chain_id[MAX_CHAINS];
 int chain_length = 1;
-int next_service_id = 4;
+int next_service_id = 5;
 
 // Used for flow hashing
 #define BYTE_VALUE_MAX 256
 #define ALL_32_BITS 0xffffffff
 #define BIT_8_TO_15 0x0000ff00
 
-#define CPU_MAX 0.24
+#define CPU_MAX 0.3
 
 
 /* number of package between each print */
@@ -198,7 +198,7 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
                 flow_entry->sc = onvm_sc_create();
                 sc = flow_entry->sc;
 
-                for (int i = 1; i < chain_length + 1; i++) {
+                for (int i = 1; i < CHAIN_LENGTH; i++) {
                         next_dest_id = default_service_chain_id[i-1];
                         nf = &nfs[next_dest_id];
                         if (nf->resource_usage.cpu_time_proportion > CPU_MAX) {
@@ -227,10 +227,10 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
                 sc = flow_entry->sc;
         }
 
-        for (int i = 1; i < chain_length + 1; i++) {
+        for (int i = 1; i < CHAIN_LENGTH; i++) {
                 dest = sc->sc[i].destination;
                 nf = &nfs[dest];
-                if (nf->resource_usage.cpu_time_proportion > CPU_MAX) {
+                if (nf->resource_usage.cpu_time_proportion > CPU_MAX) { // wrk benchmark
                         switch (nf->state)
                         {
                                 case ONVM_NF_STATELESS:
@@ -292,7 +292,6 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
                 //printf("Num_duplicated %d\n", sc->sc[1].num_duplicated);
                 //printf("Num_packets %ld\n", sc->sc[1].num_packets);
                 dest = sc->sc[1].destination_dup[dup_index];
-
         } else {
                 dest = sc->sc[1].destination;
         }
@@ -305,7 +304,7 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
         // TODO subtract and add flows from all NF's
         if (flags & 0x1) { // FIN so add connection count to service chain
                 nf->num_flows--;
-                for (int i = 1; i < chain_length + 1; i++) {
+                for (int i = 1; i < CHAIN_LENGTH; i++) {
                         if (nf->num_flows == 0) {
                                 printf("Number of flows is 0\n");
                                 if (sc->sc[i].is_duplicated == 1) {
@@ -340,6 +339,7 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
         if (dups_killed == 1) {
                 dest = sc->sc[1].destination;
         }
+        //printf("destination (lb) %d\n", dest);
 
         meta->action = ONVM_NF_ACTION_TONF; // otherwise we have a scaled nf so send it to that
         meta->destination = dest;
@@ -443,6 +443,7 @@ static int init_lb_maps(struct onvm_nf *nf) {
 
         default_service_chain[0] = &nfs[3]; // ID 3 is
         default_service_chain_id[0] = 3;
+        default_service_chain_id[1] = 4;
 
         printf("We are here\n");
 

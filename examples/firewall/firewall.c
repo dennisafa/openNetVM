@@ -230,6 +230,9 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
                 return 0;
         }
 
+#if LOAD_BALANCE_LOOKUP
+
+
         switch (rule) {
                 case 0:
                         meta->action = ONVM_NF_ACTION_TONF;
@@ -385,6 +388,7 @@ int main(int argc, char *argv[]) {
                 onvm_nflib_stop(nf_local_ctx);
                 rte_exit(EXIT_FAILURE, "Invalid command-line arguments\n");
         }
+        onvm_
 
         rules = setup_rules(&num_rules, rule_file);
         lpm_setup(rules, num_rules);

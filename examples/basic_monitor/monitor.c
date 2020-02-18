@@ -66,6 +66,8 @@ static uint32_t total_packets = 0;
 static uint64_t last_cycle;
 static uint64_t cur_cycles;
 
+uint32_t destination;
+
 /* shared data structure containing host port info */
 extern struct port_info *ports;
 
@@ -167,8 +169,45 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
                 counter = 0;
         }
 
+#ifdef LOAD_BALANCE_LOOKUP
+        int fd_ret;
+        struct onvm_flow_entry *flow_entry = NULL;
+        struct onvm_service_chain *service_chain = NULL;
+        int index, dup_index;
+        //struct onvm_service_chain *sc;
+        fd_ret = onvm_flow_dir_get_pkt(pkt, &flow_entry);
+        if (fd_ret < 0) {
+                printf("No flow lookup for this packet\n");
+                goto normal_send;
+        } else {
+                service_chain = flow_entry->sc;
+        }
+        for (int i = 0; i < CHAIN_LENGTH; i++) {
+                if (service_chain->sc[i].destination == nf_local_ctx->nf->service_id) {
+                        index = i + 1;
+                        if (service_chain->sc[index].destination == 0) {
+                                destination = ONVM_MTCP_ID;
+                                //printf("We're done!\n");
+                        }
+                        else {
+                                //printf("Found next service_chain entry");
+                                if (service_chain->sc[index].is_duplicated == 1) {
+                                        dup_index = service_chain->sc[index].num_packets % service_chain->sc[index].num_duplicated;
+                                        destination = service_chain->sc[index].destination_dup[dup_index];
+                                }
+                                else {
+                                        destination = service_chain->sc[index].destination;
+                                }
+                        }
+                }
+
+        }
+#endif
+
+        normal_send:
+
         meta->action = ONVM_NF_ACTION_TONF;
-        meta->destination = 2;
+        meta->destination = destination;
 
 //        if (onvm_pkt_swap_src_mac_addr(pkt, meta->destination, ports) != 0) {
 //                RTE_LOG(INFO, APP, "ERROR: Failed to swap src mac with dst mac!\n");
@@ -207,6 +246,8 @@ main(int argc, char *argv[]) {
                 onvm_nflib_stop(nf_local_ctx);
                 rte_exit(EXIT_FAILURE, "Invalid command-line arguments\n");
         }
+        onvm_flow_dir_nf_init();
+
         nf_local_ctx->nf->state = ONVM_NF_STATELESS;
 
         cur_cycles = rte_get_tsc_cycles();

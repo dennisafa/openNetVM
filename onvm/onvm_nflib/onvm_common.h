@@ -71,6 +71,9 @@
 
 #define ONVM_NF_STATELESS 64
 #define ONVM_NF_STATEFUL 65
+#define LOAD_BALANCE_LOOKUP 1
+#define CHAIN_LENGTH 3
+#define ONVM_MTCP_ID 2
 
 #define NUM_MBUFS 32767          // total number of mbufs (2^15 - 1)
 #define NF_QUEUE_RINGSIZE 16384  // size of queue for NFs
@@ -372,6 +375,7 @@ struct onvm_service_chain_entry {
         uint8_t action;
         uint8_t is_duplicated;
         uint8_t num_duplicated;
+        uint8_t num_hops;
 };
 
 struct onvm_service_chain {

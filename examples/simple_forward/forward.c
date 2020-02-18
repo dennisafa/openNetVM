@@ -146,7 +146,9 @@ do_stats_display(struct rte_mbuf *pkt) {
         printf("-----\n");
         printf("Port : %d\n", pkt->port);
         printf("Size : %d\n", pkt->pkt_len);
-        printf("N°   : %" PRIu64 "\n", pkt_process);
+        printf("N°   : %"
+        PRIu64
+        "\n", pkt_process);
         printf("\n\n");
 
         ip = onvm_pkt_ipv4_hdr(pkt);
@@ -165,11 +167,44 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
                 do_stats_display(pkt);
                 counter = 0;
         }
-//        int fd_ret;
-//
-//        struct onvm_flow_entry *flow_entry = NULL;
-//        //struct onvm_service_chain *sc;
-//        fd_ret = onvm_flow_dir_get_pkt(pkt, &flow_entry);
+
+#ifdef LOAD_BALANCE_LOOKUP
+        int fd_ret;
+        struct onvm_flow_entry *flow_entry = NULL;
+        struct onvm_service_chain *service_chain = NULL;
+        int index, dup_index;
+        //struct onvm_service_chain *sc;
+        fd_ret = onvm_flow_dir_get_pkt(pkt, &flow_entry);
+        if (fd_ret < 0) {
+                printf("No flow lookup for this packet\n");
+                goto normal_send;
+        } else {
+                service_chain = flow_entry->sc;
+        }
+        for (int i = 0; i < CHAIN_LENGTH; i++) {
+                if (service_chain->sc[i].destination == nf_local_ctx->nf->service_id) {
+                        index = i + 1;
+                        if (service_chain->sc[index].destination == 0) {
+                                destination = ONVM_MTCP_ID;
+                                printf("We're done!\n");
+                        }
+                        else {
+                                //printf("Found next service_chain entry");
+                                if (service_chain->sc[index].is_duplicated == 1) {
+                                        dup_index = service_chain->sc[index].num_packets % service_chain->sc[index].num_duplicated;
+                                        destination = service_chain->sc[index].destination_dup[dup_index];
+                                }
+                                else {
+                                        destination = service_chain->sc[index].destination;
+                                }
+                                //printf("destination: %d\n", destination);
+                        }
+                }
+
+        }
+#endif
+
+
 //
 //        union ipv4_5tuple_host newkey;
 //        struct tcp_hdr *tcp_hdr;
@@ -190,14 +225,10 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
 //                printf("Could not find hash\n");
 //        }
 //        printf("Flow lkup: %s\n", flow_meta_lkup->service_chain[0]->tag);
+
+        normal_send:
         meta->action = ONVM_NF_ACTION_TONF;
-        meta->destination = 2;
-        return 0;
-
-
-        meta->action = ONVM_NF_ACTION_OUT;
-        meta->destination = 0;
-
+        meta->destination = destination;
         return 0;
 }
 
@@ -233,6 +264,7 @@ main(int argc, char *argv[]) {
                 onvm_nflib_stop(nf_local_ctx);
                 rte_exit(EXIT_FAILURE, "Invalid command-line arguments\n");
         }
+        destination = ONVM_MTCP_ID;
         onvm_flow_dir_nf_init();
 
         onvm_nflib_run(nf_local_ctx);
