@@ -94,8 +94,8 @@
 #define NO_FLAGS 0
 
 #define ONVM_NUM_RX_THREADS 1
-/* Number of auxiliary threads in manager, 1 reserved for stats */
-#define ONVM_NUM_MGR_AUX_THREADS 1
+/* Number of auxiliary threads in manager, 1 reserved for stats, 1 for rusage */
+#define ONVM_NUM_MGR_AUX_THREADS 2
 #define ONVM_NUM_WAKEUP_THREADS 1  // Enabled when using shared core mode
 
 /*************************External global variables***************************/
