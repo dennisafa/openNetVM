@@ -53,9 +53,16 @@
 #include <signal.h>
 #include <rte_ether.h>
 #include <rte_mbuf.h>
+#include <rte_hash.h>
+#include <sys/resource.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 #include "onvm_config_common.h"
 #include "onvm_msg_common.h"
+
+#define ONVM_NF_HANDLE_TX 1                   // should be true if NFs primarily pass packets to each other
+#define ONVM_NF_SHUTDOWN_CORE_REASSIGNMENT 0  // should be true if on NF shutdown onvm_mgr tries to reallocate cores
 
 #define ONVM_MAX_CHAIN_LENGTH 4  // the maximum chain length
 #define MAX_NFS 128              // total number of concurrent NFs allowed (-1 because ID 0 is reserved)
@@ -75,6 +82,7 @@
 #define ONVM_NF_ACTION_OUT  3  // send the packet out the NIC port set in the argument field
 
 #define PKT_WAKEUP_THRESHOLD 1 // for shared core mode, how many packets are required to wake up the NF
+#define MSG_WAKEUP_THRESHOLD 1 // for shared core mode, how many messages on an NF's ring are required to wake up the NF
 
 /* Used in setting bit flags for core options */
 #define MANUAL_CORE_ASSIGNMENT_BIT 0
@@ -194,6 +202,7 @@ struct tx_stats {
 struct port_info {
         uint8_t num_ports;
         uint8_t id[RTE_MAX_ETHPORTS];
+        uint8_t init[RTE_MAX_ETHPORTS];
         struct ether_addr mac[RTE_MAX_ETHPORTS];
         volatile struct rx_stats rx_stats;
         volatile struct tx_stats tx_stats;
@@ -255,6 +264,7 @@ struct onvm_nf_local_ctx {
  * This structure is available in the NF when processing packets or executing the callback.
  */
 struct onvm_nf {
+	pid_t pid;
         struct rte_ring *rx_q;
         struct rte_ring *tx_q;
         struct rte_ring *msg_q;
@@ -317,6 +327,14 @@ struct onvm_nf {
                 /* Mutex for NF sem_wait */
                 sem_t *nf_mutex;
         } shared_core;
+
+        struct {
+                unsigned long last_update; 
+                unsigned long last_usage;
+
+                // In the range [0, 1], indicates total CPU usage.
+                double cpu_time_proportion;
+        } resource_usage;
 };
 
 /*
@@ -354,6 +372,14 @@ struct lpm_request {
         uint32_t max_num_rules;
         uint32_t num_tbl8s;
         int socket_id;
+        int status;
+};
+
+/* 
+ * Structure used to initiate a flow tables hash_table from a secondary process, it is enqueued onto the managers message ring
+ */
+struct ft_request {
+        struct rte_hash_parameters *ipv4_hash_params;
         int status;
 };
 
@@ -395,9 +421,9 @@ struct lpm_request {
 #define NF_CORE_OUT_OF_RANGE 11   // The manually selected core is out of range
 #define NF_CORE_BUSY 12           // The manually selected core is busy
 #define NF_WAITING_FOR_LPM 13     // NF is waiting for a LPM request to be fulfilled
+#define NF_WAITING_FOR_FT 14      // NF is waiting for a flow-table request to be fulfilled
 
 #define NF_NO_ID -1
-#define ONVM_NF_HANDLE_TX 1  // should be true if NFs primarily pass packets to each other
 
 /*
  * Given the rx queue name template above, get the queue name
@@ -469,7 +495,7 @@ get_sem_name(unsigned id) {
 
 static inline int
 whether_wakeup_client(struct onvm_nf *nf, struct nf_wakeup_info *nf_wakeup_info) {
-        if (rte_ring_count(nf->rx_q) < PKT_WAKEUP_THRESHOLD)
+        if (rte_ring_count(nf->rx_q) < PKT_WAKEUP_THRESHOLD && rte_ring_count(nf->msg_q) < MSG_WAKEUP_THRESHOLD)
                 return 0;
 
         /* Check if its already woken up */

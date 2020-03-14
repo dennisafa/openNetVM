@@ -191,6 +191,9 @@ onvm_nflib_handle_msg(struct onvm_nf_msg *msg, struct onvm_nf_local_ctx *nf_loca
 int
 onvm_nflib_send_msg_to_nf(uint16_t dest_nf, void *msg_data);
 
+int 
+onvm_nflib_send_kill_msg(int destid);
+
 /**
  * Stop this NF and clean up its memory
  * Sends shutdown message to manager.
@@ -270,6 +273,17 @@ onvm_nflib_scale(struct onvm_nf_scale_info *scale_info);
 int
 onvm_nflib_request_lpm(struct lpm_request *req);
 
+/*
+ * Initializes a flow_tables hashmap. Returns the status code, representing the success or failure of the initialization 
+ *
+ * @param rte_hash_parameters
+ *  A hash_params struct containing the properly initialized properties of the hashmap
+ * @return
+ *  Status of the intitialization  
+ */
+int
+onvm_nflib_request_ft(struct rte_hash_parameters *ipv4_hash_params);
+
 struct onvm_service_chain *
 onvm_nflib_get_default_chain(void);
 
@@ -278,5 +292,8 @@ onvm_nflib_get_default_chain(void);
  */
 struct onvm_configuration *
 onvm_nflib_get_onvm_config(void);
+
+int
+onvm_nflib_fork(const char *nf_app_dir, int host_sid, int sid);
 
 #endif // _ONVM_NFLIB_H_

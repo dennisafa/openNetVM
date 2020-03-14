@@ -52,6 +52,7 @@
 #include "onvm_mgr.h"
 #include "onvm_nf.h"
 #include "onvm_pkt.h"
+#include "onvm_rusage.h"
 #include "onvm_stats.h"
 
 /****************************Internal Declarations****************************/
@@ -67,6 +68,9 @@ static uint8_t worker_keep_running = 1;
 
 static void
 handle_signal(int sig);
+
+static void
+*rusage_thread_main(__attribute__((unused)) void *args);
 
 /*******************************Worker threads********************************/
 
@@ -98,6 +102,11 @@ master_thread_main(void) {
 
         /* Initial pause so above printf is seen */
         sleep(5);
+
+        pthread_t rusage_thd;
+        if (pthread_create(&rusage_thd, NULL, rusage_thread_main, NULL) != 0) {
+                RTE_LOG(WARNING, APP, "Unable to launch rusage thread.\n");
+        }
 
         onvm_stats_init(verbosity_level);
         /* Loop forever: sleep always returns 0 or <= param */
@@ -134,6 +143,9 @@ master_thread_main(void) {
 
         /* Stop all RX and TX threads */
         worker_keep_running = 0;
+
+        RTE_LOG(INFO, APP, "Core %d: Ending rusage thread\n", rte_lcore_id());
+        pthread_join(rusage_thd, NULL);
 
         /* Tell all NFs to stop */
         for (i = 0; i < MAX_NFS; i++) {
@@ -259,6 +271,14 @@ tx_thread_main(void *arg) {
         free(tx_mgr->tx_thread_info);
         free(tx_mgr->nf_rx_bufs);
         free(tx_mgr);
+        return 0;
+}
+
+static void
+*rusage_thread_main(__attribute__((unused)) void *args) {
+        while (worker_keep_running && usleep(RUSAGE_UPDATE_INTERVAL_MS * 1000) == 0) {
+                onvm_update_rusage();
+        }
         return 0;
 }
 
@@ -423,6 +443,7 @@ main(int argc, char *argv[]) {
                         }
                 }
         }
+
         /* Master thread handles statistics and NF management */
         master_thread_main();
         return 0;

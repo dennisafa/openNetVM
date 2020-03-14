@@ -88,6 +88,17 @@ inline static int
 onvm_nf_stop(struct onvm_nf *nf);
 
 /*
+ * Function to move a NF to another core.
+ *
+ * Input  : instance id of the NF that needs to be moved
+ *          new_core value of where the NF should be moved
+ * Output : an error code
+ *
+ */
+inline int
+onvm_nf_relocate_nf(uint16_t nf, uint16_t new_core);
+
+/*
  * Function that initializes an LPM object
  *
  * Input  : the address of an lpm_request struct
@@ -97,6 +108,14 @@ onvm_nf_stop(struct onvm_nf *nf);
 static void
 onvm_nf_init_lpm_region(struct lpm_request *req_lpm);
 
+/*
+ * Function that initializes a hashtable for a flow_table struct
+ *
+ * Input : the address of a ft_request struct
+ * Output : a return code based on initialization of a FT object (similar to LPM request)
+ */
+static void
+onvm_nf_init_ft(struct ft_request *ft);
 /********************************Interfaces***********************************/
 
 uint16_t
@@ -141,6 +160,7 @@ onvm_nf_check_status(void) {
         struct onvm_nf_msg *msg;
         struct onvm_nf_init_cfg *nf_init_cfg;
         struct lpm_request *req_lpm;
+        struct ft_request *ft;
         uint16_t stop_nf_id;
         int num_msgs = rte_ring_count(incoming_msg_queue);
 
@@ -158,6 +178,10 @@ onvm_nf_check_status(void) {
                                 // TODO: Add stats event handler here
                                 req_lpm = (struct lpm_request *)msg->msg_data;
                                 onvm_nf_init_lpm_region(req_lpm);
+                                break;
+                        case MSG_REQUEST_FT:
+                                ft = (struct ft_request *) msg->msg_data;
+                                onvm_nf_init_ft(ft);
                                 break;
                         case MSG_NF_STARTING:
                                 nf_init_cfg = (struct onvm_nf_init_cfg *)msg->msg_data;
@@ -296,10 +320,11 @@ onvm_nf_stop(struct onvm_nf *nf) {
         uint16_t nf_status;
         uint16_t service_id;
         uint16_t nb_pkts, i;
-        int mapIndex;
         struct onvm_nf_msg *msg;
         struct rte_mempool *nf_info_mp;
         struct rte_mbuf *pkts[PACKET_READ_SIZE];
+        uint16_t candidate_nf_id, candidate_core;
+        int mapIndex;
 
         if (nf == NULL)
                 return 1;
@@ -307,6 +332,7 @@ onvm_nf_stop(struct onvm_nf *nf) {
         nf_id = nf->instance_id;
         service_id = nf->service_id;
         nf_status = nf->status;
+        candidate_core = nf->thread_info.core;
 
         /* Cleanup the allocated tag */
         if (nf->tag) {
@@ -383,6 +409,15 @@ onvm_nf_stop(struct onvm_nf *nf) {
                 }
         }
 
+        /* As this NF stopped we can reevaluate core mappings */
+        if (ONVM_NF_SHUTDOWN_CORE_REASSIGNMENT) {
+                /* As this NF stopped we can reevaluate core mappings */
+                candidate_nf_id = onvm_threading_find_nf_to_reassign_core(candidate_core, cores);
+                if (candidate_nf_id > 0) {
+                        onvm_nf_relocate_nf(candidate_nf_id, candidate_core);
+                }
+        }
+
         return 0;
 }
 
@@ -400,4 +435,36 @@ onvm_nf_init_lpm_region(struct lpm_request *req_lpm) {
         } else {
                 req_lpm->status = -1;
         }
+}
+
+static void
+onvm_nf_init_ft(struct ft_request *ft) {
+        struct rte_hash *hash;
+
+        hash = rte_hash_create(ft->ipv4_hash_params);
+        if (hash) {
+                ft->status = 0;
+        } else {
+                ft->status = -1;
+        }
+}
+
+inline int
+onvm_nf_relocate_nf(uint16_t dest, uint16_t new_core) {
+        uint16_t *msg_data;
+
+        msg_data = rte_malloc("Change core msg data", sizeof(uint16_t), 0);
+        *msg_data = new_core;
+
+        cores[nfs[dest].thread_info.core].nf_count--;
+
+        onvm_nf_send_msg(dest, MSG_CHANGE_CORE, msg_data);
+
+        /* We probably need logic that handles if everything is successful */
+
+        /* TODO Add core number */
+        onvm_stats_gen_event_nf_info("NF Ready", &nfs[dest]);
+
+        cores[new_core].nf_count++;
+        return 0;
 }

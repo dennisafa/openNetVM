@@ -24,6 +24,8 @@ SCRIPT=$(readlink -f "$0")
 SCRIPTPATH=$(dirname "$SCRIPT")
 NF_NAME=$1
 NF_PATH=$SCRIPTPATH/$NF_NAME
+# For NFD NF 
+NF_NAME=${NF_PATH##*/}
 BINARY=$NF_PATH/build/app/$NF_NAME
 DPDK_BASE_ARGS="-n 3 --proc-type=secondary"
 # For simple mode, only used for initial dpdk startup
@@ -63,6 +65,9 @@ if [[ $dash_dash_cnt -ge 2 ]]; then
   ONVM_ARGS="$(echo " ""$@" | awk -F "--" '{print $2;}')"
   # Move to NF arguments
   shift ${non_nf_arg_cnt}
+  if [[ $DPDK_ARGS =~ "-l" && ! $ONVM_ARGS =~ "-m" ]]; then
+    echo "Warning: Include -m flag in order to bind core specified in -l"
+  fi
 elif [[ $dash_dash_cnt -eq 0 ]]; then
   # Dealing with required args shared by all NFs
   service=$1

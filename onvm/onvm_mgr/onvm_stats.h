@@ -60,6 +60,7 @@
 extern const char *NF_MSG[3];
 #define ONVM_STATS_MSG "\n"\
         "NF TAG         IID / SID / CORE    rx_pps  /  tx_pps        rx_drop  /  tx_drop           out   /    tonf     /   drop\n"\
+        "RUSAGE\n"\
         "----------------------------------------------------------------------------------------------------------------------\n"
 #define ONVM_STATS_ADV_MSG "\n"\
         "NF TAG         IID / SID / CORE    rx_pps  /  tx_pps             rx  /  tx                out   /    tonf     /   drop\n"\
@@ -78,7 +79,8 @@ extern const char *NF_MSG[3];
         "act_out,act_tonf,act_drop,act_next,act_buffer,act_returned,num_wakeups,wakeup_rate\n"
 #define ONVM_STATS_REG_CONTENT \
         "%-14s %2u  /  %-2u / %2u    %9" PRIu64 " / %-9" PRIu64 "   %11" PRIu64 " / %-11" PRIu64\
-        "  %11" PRIu64 " / %-11" PRIu64 " / %-11" PRIu64 " \n"
+        "  %11" PRIu64 " / %-11" PRIu64 " / %-11" PRIu64 "\n" \
+        "%05lf\n"
 #define ONVM_STATS_REG_TOTALS \
         "SID %-2u %2u%s -                   %9" PRIu64 " / %-9" PRIu64 "   %11" PRIu64\
         " / %-11" PRIu64 "  %11" PRIu64 " / %-11" PRIu64 " / %-11" PRIu64 "\n"
@@ -103,6 +105,8 @@ extern const char *NF_MSG[3];
         ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n"
 #define ONVM_STATS_RAW_DUMP_PORTS_CONTENT \
         "%s,%u,%" PRIu64 ",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n"
+#define ONVM_STATS_RUSAGE \
+        "%u"
 
 #define ONVM_STATS_FOPEN_ARGS "w+"
 #define ONVM_STATS_PATH_BASE "../onvm_web/"
@@ -214,5 +218,7 @@ onvm_stats_gen_event_info(const char *msg, uint8_t type, void *data);
 
 void
 onvm_stats_gen_event_nf_info(const char *msg, struct onvm_nf *nf);
+
+
 
 #endif  // _ONVM_STATS_H_
