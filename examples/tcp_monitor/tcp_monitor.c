@@ -75,20 +75,22 @@ struct chain_meta {
         int num_packets;
 };
 
+void load_balance_flow(struct onvm_nf *nf, struct onvm_service_chain *sc, int index);
+
 // Trying to use flow specific
 
 static struct flow_meta *global_flow_meta[MAX_FLOWS];
 
 int default_service_chain_id[MAX_CHAINS];
 int chain_length = 1;
-int next_service_id = 5;
+int next_service_id = 0;
 
 // Used for flow hashing
 #define BYTE_VALUE_MAX 256
 #define ALL_32_BITS 0xffffffff
 #define BIT_8_TO_15 0x0000ff00
 
-#define CPU_MAX 0.3
+#define CPU_MAX 0.27
 
 
 /* number of package between each print */
@@ -99,6 +101,7 @@ static uint64_t last_cycle;
 static uint64_t cur_cycles;
 
 int create_rtehashmap(const char *name, int entries, size_t key_len);
+
 static struct rte_hash *flow_map;
 
 /* shared data structure containing host port info */
@@ -162,7 +165,8 @@ callback_handler(__attribute__((unused)) struct onvm_nf_local_ctx *nf_local_ctx)
 
 
 static int
-packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((unused)) struct onvm_nf_local_ctx *nf_local_ctx) {
+packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
+               __attribute__((unused)) struct onvm_nf_local_ctx *nf_local_ctx) {
         int fd_ret;
         int dest;
         int num_duplicated;
@@ -191,91 +195,47 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
         flags = ((tcp_hdr->data_off << 8) | tcp_hdr->tcp_flags) & 0b111111111;
 
         fd_ret = onvm_flow_dir_get_pkt(pkt, &flow_entry);
-        if (fd_ret < 0) {
-                //printf("New flow\n");
+        if (fd_ret >= 0) {
+                sc = flow_entry->sc;
+        } else {
                 onvm_flow_dir_add_pkt(pkt, &flow_entry);
                 memset(flow_entry, 0, sizeof(struct onvm_flow_entry));
                 flow_entry->sc = onvm_sc_create();
                 sc = flow_entry->sc;
 
                 for (int i = 1; i < CHAIN_LENGTH; i++) {
-                        next_dest_id = default_service_chain_id[i-1];
+                        next_dest_id = default_service_chain_id[i - 1];
                         nf = &nfs[next_dest_id];
                         if (nf->resource_usage.cpu_time_proportion > CPU_MAX) {
-//                                printf("Nf is overflowing, CPU\n");
-//                                printf("NF: %s\n", nf->tag);
-                                switch (nf->state)
-                                {
+                                switch (nf->state) {
                                         case ONVM_NF_STATEFUL:
-                                                printf("Stateful NF balancing\n");
+                                                load_balance_flow(nf, sc, i);
                                                 break;
                                         default:
-                                                onvm_sc_append_entry(flow_entry->sc, ONVM_NF_ACTION_TONF, default_service_chain_id[i-1]);
-                                                printf("Neither stateful nor stateless\n");
+                                                onvm_sc_append_entry(flow_entry->sc, ONVM_NF_ACTION_TONF,
+                                                                     default_service_chain_id[i - 1]);
                                                 break;
                                 }
-                                //onvm_nflib_fork(nf->tag, 2, next_id);
 
                         } else {
-                                onvm_sc_append_entry(flow_entry->sc, ONVM_NF_ACTION_TONF, default_service_chain_id[i-1]);
+                                onvm_sc_append_entry(flow_entry->sc, ONVM_NF_ACTION_TONF,
+                                                     default_service_chain_id[i - 1]);
                         }
                 }
                 dest = default_service_chain_id[0];
         }
-        else {
-                //printf("Flow found\n");
-                sc = flow_entry->sc;
-        }
 
+        //printf("New flow\n");
         for (int i = 1; i < CHAIN_LENGTH; i++) {
                 dest = sc->sc[i].destination;
                 nf = &nfs[dest];
                 if (nf->resource_usage.cpu_time_proportion > CPU_MAX) { // wrk benchmark
-                        switch (nf->state)
-                        {
+                        switch (nf->state) {
                                 case ONVM_NF_STATELESS:
-//                                        printf("Stateless NF balancing\n");
-                                        num_duplicated = nf->num_duplicated;
-
-                                        if (num_duplicated > 1) { // If the flow is coming in and the original is overloaded, spread across dups
-                                                for (int j = 0; j < num_duplicated; j++) {
-                                                        sc->sc[i].destination_dup[j] = nf->destination_dup[j];
-                                                }
-                                                sc->sc[i].is_duplicated = 1;
-                                                sc->sc[i].num_duplicated = num_duplicated;
-                                                //printf("Num duplicated: %d\n", num_duplicated);
-                                        }
-
-                                        // But if it's been more than 5 secs and the duplicates arent taking the load off
-                                        // then spawn another one and add it
-
-                                        // Copy nf dup array into current duplicated service chain array
-                                        if ((rte_get_tsc_cycles() - nf->time_since_scale) * TIME_TTL_MULTIPLIER /
-                                                                     rte_get_timer_hz() < 10) {
-                                                //printf("Time to live exceeded, shutting down\n");
-                                                break;
-                                        }
-
-                                        if (num_duplicated == ONVM_MAX_CHAIN_LENGTH - 1) {
-                                                //printf("Maximum duplications\n");
-                                                break;
-                                        }
-
-                                        onvm_nflib_fork(nf->tag, 2, next_service_id);
-                                        nf->time_since_scale = rte_get_tsc_cycles();
-                                        sc->sc[i].is_duplicated = 1;
-                                        nf->num_duplicated++;
-                                        nf->destination_dup[nf->num_duplicated - 1] = next_service_id; // 4 is the id of the new duplicated NF
-                                        next_service_id++;
-
-                                        for (int j = 0; j < nf->num_duplicated; j++) {
-                                                sc->sc[i].destination_dup[j] = nf->destination_dup[j];
-                                        }
-
-                                        sc->sc[i].num_duplicated = nf->num_duplicated;
+                                        load_balance_flow(nf, sc, i);
                                         break;
                                 case ONVM_NF_STATEFUL:
-                                        printf("Stateful NF balancing\n");
+                                        printf("Stateful NF balancing, already assigned a flow\n");
                                         break;
                                 default:
                                         //onvm_sc_append_entry(flow_entry->sc, ONVM_NF_ACTION_TONF, default_service_chain_id[i-1]);
@@ -287,64 +247,101 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta, __attribute__((
 
         sc->sc[1].num_packets++;
         if (sc->sc[1].is_duplicated == 1) {
-                //printf("Num dup: %d\n", sc->sc[1].num_duplicated);
                 dup_index = sc->sc[1].num_packets % sc->sc[1].num_duplicated;
-                //printf("Num_duplicated %d\n", sc->sc[1].num_duplicated);
-                //printf("Num_packets %ld\n", sc->sc[1].num_packets);
                 dest = sc->sc[1].destination_dup[dup_index];
         } else {
                 dest = sc->sc[1].destination;
         }
-        nf = &nfs[default_service_chain_id[0]];
+
+        nf = nf_local_ctx->nf;
+
         if ((flags >> 1) & 0x1) { // SYN so add connection count to service chain
                 nf->num_flows++;
-                printf("Number of flows: %d\n",  nf->num_flows);
+                printf("Number of flows: %ld\n", nf->num_flows);
         }
 
-        // TODO subtract and add flows from all NF's
         if (flags & 0x1) { // FIN so add connection count to service chain
-                nf->num_flows--;
-                for (int i = 1; i < CHAIN_LENGTH; i++) {
-                        if (nf->num_flows == 0) {
-                                printf("Number of flows is 0\n");
+                if (nf->num_flows > 0) {
+                        nf->num_flows--;
+                }
+
+                if (nf->num_flows == 0) {
+                        printf("Killing NF's\n");
+                        for (int i = 1; i < CHAIN_LENGTH; i++) {
+                                nf = &nfs[default_service_chain_id[i-1]];
                                 if (sc->sc[i].is_duplicated == 1) {
                                         num_duplicated = sc->sc[i].num_duplicated;
+                                        sc->sc[i].destination_dup[0] = 0;
                                         for (int j = 1; j < num_duplicated; j++) {
-                                                int dst_instance_id = onvm_sc_service_to_nf_map(sc->sc[i].destination_dup[j], pkt);
+                                                int dst_instance_id = onvm_sc_service_to_nf_map(
+                                                        sc->sc[i].destination_dup[j], pkt);
                                                 onvm_nflib_send_kill_msg(dst_instance_id);
                                                 printf("Killing %d\n\n", sc->sc[i].destination_dup[j]);
                                                 sc->sc[i].num_duplicated--;
-                                                nf->num_duplicated--;
+                                                nf->num_duplicated--; // heres the problem - nf should be changed too
                                                 sc->sc[i].destination_dup[j] = 0;
                                                 next_service_id--;
                                         }
-                                        //onvm_nflib_send_kill_msg(dest);
+                                        sc->sc[i].is_duplicated = 0;
                                 }
                                 dups_killed = 1;
                         }
-//                        printf("Number of flows: %ld\n",  sc->sc[i].num_flows);
                 }
-                printf("Number of flows: %d\n",  nf->num_flows);
+                printf("Number of flows: %ld\n", nf->num_flows);
         }
 
-        // If the nf is stateless, and if the CPU usage is above certain percentage, make it alternate sending across
-        // different NF's
-
-
-//        if (flags & 0x1) { // FIN
-//                printf("FIN, killing %d\n", to_kill);
-//        }
-
-        //printf("Destination = %d\n", dest);
         if (dups_killed == 1) {
                 dest = sc->sc[1].destination;
+                printf("Dups killed, sending to %d\n", dest);
         }
-        //printf("destination (lb) %d\n", dest);
 
         meta->action = ONVM_NF_ACTION_TONF; // otherwise we have a scaled nf so send it to that
         meta->destination = dest;
 
         return 0;
+}
+
+void
+load_balance_flow(struct onvm_nf *nf, struct onvm_service_chain *sc, int index) {
+        int num_duplicated;
+
+        num_duplicated = nf->num_duplicated;
+
+        if (num_duplicated > 1 && nf->state ==
+                                  ONVM_NF_STATELESS) { // If the flow is coming in and the original is overloaded, spread across dups
+                for (int j = 0; j < num_duplicated; j++) {
+                        sc->sc[index].destination_dup[j] = nf->destination_dup[j];
+                }
+                sc->sc[index].is_duplicated = 1;
+                sc->sc[index].num_duplicated = num_duplicated;
+                //printf("Num duplicated: %d\n", num_duplicated);
+        }
+
+        // But if it's been more than 5 secs and the duplicates arent taking the load off
+        // then spawn another one and add it
+
+        // Copy nf dup array into current duplicated service chain array
+        if ((rte_get_tsc_cycles() - nf->time_since_scale) * TIME_TTL_MULTIPLIER /
+            rte_get_timer_hz() < 10) {
+                return;
+        }
+
+        if (num_duplicated == ONVM_MAX_CHAIN_LENGTH - 1) {
+                return;
+        }
+
+        onvm_nflib_fork(nf->tag, 2, next_service_id);
+        nf->time_since_scale = rte_get_tsc_cycles();
+        sc->sc[index].is_duplicated = 1;
+        nf->num_duplicated++;
+        nf->destination_dup[nf->num_duplicated - 1] = next_service_id; // 4 is the id of the new duplicated NF
+        next_service_id++;
+
+        for (int j = 0; j < nf->num_duplicated; j++) {
+                sc->sc[index].destination_dup[j] = nf->destination_dup[j];
+        }
+
+        sc->sc[index].num_duplicated = nf->num_duplicated;
 }
 
 int
@@ -382,9 +379,12 @@ static int init_lb_maps(struct onvm_nf *nf) {
         for (i = 0; i < MAX_FLOWS; i++) {
                 global_flow_meta[i] = (struct flow_meta *) rte_malloc(NULL, sizeof(struct flow_meta), 0);
                 global_flow_meta[i]->service_chain = (struct onvm_nf **) rte_malloc(NULL,
-                                                                                    sizeof(struct onvm_nf *) * MAX_CHAINS, 0);
+                                                                                    sizeof(struct onvm_nf *) *
+                                                                                    MAX_CHAINS, 0);
                 for (j = 0; j < MAX_CHAINS; j++) {
-                        global_flow_meta[i]->service_chain[j] = (struct onvm_nf *) rte_malloc(NULL, sizeof(struct onvm_nf), 0);
+                        global_flow_meta[i]->service_chain[j] = (struct onvm_nf *) rte_malloc(NULL,
+                                                                                              sizeof(struct onvm_nf),
+                                                                                              0);
                 }
                 global_flow_meta[i]->global_flow_id = -1;
         }
@@ -394,7 +394,7 @@ static int init_lb_maps(struct onvm_nf *nf) {
 
         for (j = 0; j < MAX_CHAINS; j++) {
                 default_service_chain[j] = (struct onvm_nf *) rte_malloc(NULL,
-                                                                          sizeof(struct onvm_nf), 0);
+                                                                         sizeof(struct onvm_nf), 0);
         }
 
         //global_flow_meta[i]->service_chain[0] = NULL;
@@ -424,15 +424,14 @@ static int init_lb_maps(struct onvm_nf *nf) {
         if (flow_map == NULL) {
                 printf("Could not find map\n");
                 //exit(0);
-        }
-        else {
+        } else {
                 printf("FM addr: %p\n", flow_map);
         }
 //
         rte_hash_lookup_data(flow_map, (void *) &newkey, &lkup);
 
         tcp_lb_hash_maps->global_flow_meta_freelist = rte_ring_create(global_flow_meta_freelist, MAX_FLOWS,
-                rte_socket_id(), RING_F_SP_ENQ | RING_F_SC_DEQ);
+                                                                      rte_socket_id(), RING_F_SP_ENQ | RING_F_SC_DEQ);
 
         if (tcp_lb_hash_maps->global_flow_meta_freelist == NULL) {
                 printf("Could not create ring\n");
@@ -497,6 +496,7 @@ main(int argc, char *argv[]) {
         cur_cycles = rte_get_tsc_cycles();
         last_cycle = rte_get_tsc_cycles();
         init_lb_maps(nf_local_ctx->nf);
+        next_service_id = CHAIN_LENGTH + 2;
 
         onvm_flow_dir_nf_init();
 

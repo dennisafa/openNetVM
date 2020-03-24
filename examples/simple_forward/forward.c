@@ -59,7 +59,7 @@
 #define NF_TAG "simple_forward"
 
 /* number of package between each print */
-static uint32_t print_delay = 1000000;
+static uint32_t print_delay = 50000;
 
 static uint32_t destination;
 
@@ -88,22 +88,16 @@ usage(const char *progname) {
  */
 static int
 parse_app_args(int argc, char *argv[], const char *progname) {
-        int c, dst_flag = 0;
+        int c = 0;
 
-        while ((c = getopt(argc, argv, "d:p:")) != -1) {
+        while ((c = getopt(argc, argv, "p:")) != -1) {
                 switch (c) {
-                        case 'd':
-                                destination = strtoul(optarg, NULL, 10);
-                                dst_flag = 1;
-                                break;
                         case 'p':
                                 print_delay = strtoul(optarg, NULL, 10);
                                 break;
                         case '?':
                                 usage(progname);
-                                if (optopt == 'd')
-                                        RTE_LOG(INFO, APP, "Option -%c requires an argument.\n", optopt);
-                                else if (optopt == 'p')
+                                if (optopt == 'p')
                                         RTE_LOG(INFO, APP, "Option -%c requires an argument.\n", optopt);
                                 else if (isprint(optopt))
                                         RTE_LOG(INFO, APP, "Unknown option `-%c'.\n", optopt);
@@ -114,11 +108,6 @@ parse_app_args(int argc, char *argv[], const char *progname) {
                                 usage(progname);
                                 return -1;
                 }
-        }
-
-        if (!dst_flag) {
-                RTE_LOG(INFO, APP, "Simple Forward NF requires destination flag -d.\n");
-                return -1;
         }
 
         return optind;
@@ -162,12 +151,9 @@ do_stats_display(struct rte_mbuf *pkt) {
 static int
 packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
                __attribute__((unused)) struct onvm_nf_local_ctx *nf_local_ctx) {
-        static uint32_t counter = 0;
-        if (++counter == print_delay) {
-                do_stats_display(pkt);
-                counter = 0;
-        }
 
+        static uint32_t counter = 0;
+        int found_id = 0;
 #ifdef LOAD_BALANCE_LOOKUP
         int fd_ret;
         struct onvm_flow_entry *flow_entry = NULL;
@@ -182,53 +168,55 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
                 service_chain = flow_entry->sc;
         }
         for (int i = 0; i < CHAIN_LENGTH; i++) {
-                if (service_chain->sc[i].destination == nf_local_ctx->nf->service_id) {
+                if (service_chain->sc[i].is_duplicated) {
+                        //printf("Chain is duplicated\n");
+                        for (int j = 0; j < service_chain->sc[i].num_duplicated; j++) {
+                                if (service_chain->sc[i].destination_dup[j] == nf_local_ctx->nf->service_id) {
+                                        found_id = 1;
+                                        break;
+                                }
+                        }
+                }
+
+                if (service_chain->sc[i].destination == nf_local_ctx->nf->service_id || found_id == 1) {
                         index = i + 1;
                         if (service_chain->sc[index].destination == 0) {
                                 destination = ONVM_MTCP_ID;
-                                printf("We're done!\n");
+                                //printf("Next Destination is mTCP\n");
                         }
                         else {
                                 //printf("Found next service_chain entry");
                                 if (service_chain->sc[index].is_duplicated == 1) {
                                         dup_index = service_chain->sc[index].num_packets % service_chain->sc[index].num_duplicated;
                                         destination = service_chain->sc[index].destination_dup[dup_index];
+//                                        printf("Next NF is duplicated: dest %d\n", destination);
                                 }
                                 else {
                                         destination = service_chain->sc[index].destination;
-                                }
-                                //printf("destination: %d\n", destination);
-                        }
-                }
+//                                        printf("Next NF not duplicated: dest %d\n", destination);
 
+                                }
+                        }
+                        service_chain->sc[index].num_packets++;
+                        break;
+                }
+        }
+
+        if (found_id == 0) {
+                //printf("Could not find the NF to send to\n");
         }
 #endif
-
-
-//
-//        union ipv4_5tuple_host newkey;
-//        struct tcp_hdr *tcp_hdr;
-//        struct ipv4_hdr *ipv4_hdr;
-//        void *flow_meta_value;
-//        struct flow_meta *flow_meta_lkup;
-//
-//        ipv4_hdr = onvm_pkt_ipv4_hdr(pkt);
-//        tcp_hdr = onvm_pkt_tcp_hdr(pkt);
-//
-//        newkey.ip_dst = rte_cpu_to_be_32(ipv4_hdr->dst_addr);
-//        newkey.ip_src = rte_cpu_to_be_32(ipv4_hdr->src_addr);
-//        newkey.port_dst = rte_cpu_to_be_16(tcp_hdr->dst_port);
-//        newkey.port_src = rte_cpu_to_be_16(tcp_hdr->src_port);
-//        int hash_ret = rte_hash_lookup_data(flow_map_obj, (void *) &newkey, &flow_meta_value);
-//        flow_meta_lkup = (struct flow_meta *) flow_meta_value;
-//        if (hash_ret < 0) {
-//                printf("Could not find hash\n");
-//        }
-//        printf("Flow lkup: %s\n", flow_meta_lkup->service_chain[0]->tag);
 
         normal_send:
         meta->action = ONVM_NF_ACTION_TONF;
         meta->destination = destination;
+
+        if (++counter == print_delay) {
+                do_stats_display(pkt);
+                printf("Forward: Sending to: %d\n\n", destination);
+                counter = 0;
+        }
+
         return 0;
 }
 

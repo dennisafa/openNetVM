@@ -60,7 +60,7 @@
 #define NF_TAG "basic_monitor"
 
 /* number of package between each print */
-static uint32_t print_delay = 1000000;
+static uint32_t print_delay = 50000;
 
 static uint32_t total_packets = 0;
 static uint64_t last_cycle;
@@ -131,19 +131,19 @@ do_stats_display(struct rte_mbuf *pkt) {
         /* Clear screen and move to top left */
         printf("%s%s", clr, topLeft);
 
-        printf("PACKETS\n");
-        printf("-----\n");
+//        printf("PACKETS\n");
+//        printf("-----\n");
         printf("Port : %d\n", pkt->port);
-        printf("Size : %d\n", pkt->pkt_len);
-        printf("Hash : %u\n", pkt->hash.rss);
-        printf("N°   : %" PRIu64 "\n", pkt_process);
-        printf("\n\n");
+//        printf("Size : %d\n", pkt->pkt_len);
+//        printf("Hash : %u\n", pkt->hash.rss);
+//        printf("N°   : %" PRIu64 "\n", pkt_process);
+//        printf("\n\n");
 
         ip = onvm_pkt_ipv4_hdr(pkt);
         if (ip != NULL) {
-                onvm_pkt_print(pkt);
+//                onvm_pkt_print(pkt);
         } else {
-                printf("No IP4 header found\n");
+//                printf("No IP4 header found\n");
         }
 }
 
@@ -152,7 +152,9 @@ callback_handler(__attribute__((unused)) struct onvm_nf_local_ctx *nf_local_ctx)
         cur_cycles = rte_get_tsc_cycles();
 
         if (((cur_cycles - last_cycle) / rte_get_timer_hz()) > 5) {
-                printf("Total packets received: %" PRIu32 "\n", total_packets);
+                printf("Total packets received: %"
+                PRIu32
+                "\n", total_packets);
                 last_cycle = cur_cycles;
         }
 
@@ -162,18 +164,13 @@ callback_handler(__attribute__((unused)) struct onvm_nf_local_ctx *nf_local_ctx)
 static int
 packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
                __attribute__((unused)) struct onvm_nf_local_ctx *nf_local_ctx) {
-        static uint32_t counter = 0;
-        total_packets++;
-        if (++counter == print_delay) {
-                do_stats_display(pkt);
-                counter = 0;
-        }
 
 #ifdef LOAD_BALANCE_LOOKUP
         int fd_ret;
         struct onvm_flow_entry *flow_entry = NULL;
         struct onvm_service_chain *service_chain = NULL;
         int index, dup_index;
+        int found_id = 0;
         //struct onvm_service_chain *sc;
         fd_ret = onvm_flow_dir_get_pkt(pkt, &flow_entry);
         if (fd_ret < 0) {
@@ -183,7 +180,17 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
                 service_chain = flow_entry->sc;
         }
         for (int i = 0; i < CHAIN_LENGTH; i++) {
-                if (service_chain->sc[i].destination == nf_local_ctx->nf->service_id) {
+                if (service_chain->sc[i].is_duplicated) {
+                        //printf("Chain is duplicated\n");
+                        for (int j = 0; j < service_chain->sc[i].num_duplicated; j++) {
+                                if (service_chain->sc[i].destination_dup[j] == nf_local_ctx->nf->service_id) {
+                                        found_id = 1;
+                                        break;
+                                }
+                        }
+                }
+
+                if (service_chain->sc[i].destination == nf_local_ctx->nf->service_id || found_id == 1) {
                         index = i + 1;
                         if (service_chain->sc[index].destination == 0) {
                                 destination = ONVM_MTCP_ID;
@@ -199,8 +206,9 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
                                         destination = service_chain->sc[index].destination;
                                 }
                         }
+                        service_chain->sc[index].num_packets++;
+                        break;
                 }
-
         }
 #endif
 
@@ -209,9 +217,14 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
         meta->action = ONVM_NF_ACTION_TONF;
         meta->destination = destination;
 
-//        if (onvm_pkt_swap_src_mac_addr(pkt, meta->destination, ports) != 0) {
-//                RTE_LOG(INFO, APP, "ERROR: Failed to swap src mac with dst mac!\n");
-//        }
+        static uint32_t counter = 0;
+        total_packets++;
+        if (++counter == print_delay) {
+                do_stats_display(pkt);
+                printf("Monitor: Sending to: %d\n\n", destination);
+                counter = 0;
+        }
+
         return 0;
 }
 
@@ -249,6 +262,7 @@ main(int argc, char *argv[]) {
         onvm_flow_dir_nf_init();
 
         nf_local_ctx->nf->state = ONVM_NF_STATELESS;
+        destination = ONVM_MTCP_ID;
 
         cur_cycles = rte_get_tsc_cycles();
         last_cycle = rte_get_tsc_cycles();

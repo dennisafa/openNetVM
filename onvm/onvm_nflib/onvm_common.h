@@ -278,7 +278,7 @@ struct onvm_nf {
         struct queue_mgr *nf_tx_mgr;
         uint16_t instance_id;
         uint16_t service_id;
-        uint16_t num_flows;
+        uint64_t num_flows;
         uint8_t num_duplicated;
         uint16_t destination_dup[ONVM_MAX_CHAIN_LENGTH];
         uint64_t time_since_scale;

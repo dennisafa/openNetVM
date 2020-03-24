@@ -894,7 +894,7 @@ onvm_nflib_fork(const char *nf_app_dir, int host_sid, int sid) {
         // Also not sure why we need three "--" arguments but that's whatever.
         int new_nf_id;
         new_nf_id = fork();
-        const char *nf_dir_onvm = "/users/dennisa/openNetVM/examples/";
+        const char *nf_dir_onvm = "/home/dennisafa/openNetVM/examples/";
         const char *build_dir = "/build/app/";
         if (new_nf_id == 0) {
                 int bufsz = 8;
@@ -929,7 +929,7 @@ onvm_nflib_fork(const char *nf_app_dir, int host_sid, int sid) {
                 char *_nf_app_dir = strdup(nf_app_dir);
                 printf("%s", _nf_app_dir);
                 int err = execl(nf_str, "-n", "3",
-                                "--proc-type=secondary", "--", "-s", "-r", sid_str, "--", "-d", "1", NULL);
+                                "--proc-type=secondary", "--", "-s", "-r", sid_str, "--", NULL);
                 // If we reach here, an error has occurred.
                 printf("fork() returned an error: %d\n", err);
                 return -1;
