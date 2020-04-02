@@ -50,7 +50,7 @@
 #include "onvm_flow_table.h"
 
 #define NO_FLAGS 0
-#define SDN_FT_ENTRIES 1024
+#define SDN_FT_ENTRIES 2048
 
 struct onvm_ft *sdn_ft;
 struct onvm_ft **sdn_ft_p;

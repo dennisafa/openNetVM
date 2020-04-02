@@ -261,7 +261,7 @@ main(int argc, char *argv[]) {
         }
         onvm_flow_dir_nf_init();
 
-        nf_local_ctx->nf->state = ONVM_NF_STATELESS;
+        nf_local_ctx->nf->state = ONVM_NF_STATEFUL;
         destination = ONVM_MTCP_ID;
 
         cur_cycles = rte_get_tsc_cycles();

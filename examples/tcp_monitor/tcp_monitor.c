@@ -57,41 +57,23 @@
 #include <rte_malloc.h>
 #include <rte_hash.h>
 #include <rte_jhash.h>
+#include "onvm_common.h"
 
 #include "onvm_nflib.h"
 #include "onvm_pkt_helper.h"
 #include "onvm_load_balance.h"
 
 #define NF_TAG "TCP Load Balancer"
-//#define SCALED_TAG "Simple Forward Network Function";
-char *scale_tag;
 
-struct chain_meta {
-        int num_connections;
-        int chain_id[10]; // should be an array of ints
-        pid_t pid_list[10]; // array of the spawned nf's pids to kill
-        int dest_id;
-        int scaled_nfs; // will represent size of chain_id array
-        int num_packets;
-};
-
-void load_balance_flow(struct onvm_nf *nf, struct onvm_service_chain *sc, int index);
+int load_balance_flow(struct onvm_nf *nf, struct onvm_service_chain *service_chain_flow_map, int index);
+int pick_initial_dest(struct onvm_service_chain *service_chain);
 
 // Trying to use flow specific
 
-static struct flow_meta *global_flow_meta[MAX_FLOWS];
-
 int default_service_chain_id[MAX_CHAINS];
-int chain_length = 1;
 int next_service_id = 0;
 
-// Used for flow hashing
-#define BYTE_VALUE_MAX 256
-#define ALL_32_BITS 0xffffffff
-#define BIT_8_TO_15 0x0000ff00
-
-#define CPU_MAX 0.27
-
+#define CPU_MAX 0.30
 
 /* number of package between each print */
 static uint32_t print_delay = 1000000;
@@ -99,10 +81,6 @@ static uint32_t print_delay = 1000000;
 static uint32_t total_packets = 0;
 static uint64_t last_cycle;
 static uint64_t cur_cycles;
-
-int create_rtehashmap(const char *name, int entries, size_t key_len);
-
-static struct rte_hash *flow_map;
 
 /* shared data structure containing host port info */
 extern struct port_info *ports;
@@ -170,19 +148,15 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
         int fd_ret;
         int dest;
         int num_duplicated;
-        int dup_index;
         int dups_killed;
-
+        int spawned_nf_id;
         struct onvm_flow_entry *flow_entry = NULL;
         struct onvm_service_chain *sc;
         struct tcp_hdr *tcp_hdr;
-
         uint16_t flags = 0;
         dups_killed = 0;
-
         struct onvm_nf *nf;
         int next_dest_id;
-
 
         if (!onvm_pkt_is_tcp(pkt) || !onvm_pkt_is_ipv4(pkt)) {
                 printf("Packet isn't TCP/IPv4");
@@ -198,6 +172,7 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
         if (fd_ret >= 0) {
                 sc = flow_entry->sc;
         } else {
+                //flow_entry = (struct onvm_flow_entry *) rte_malloc(NULL, sizeof(struct onvm_flow_entry), 0);
                 onvm_flow_dir_add_pkt(pkt, &flow_entry);
                 memset(flow_entry, 0, sizeof(struct onvm_flow_entry));
                 flow_entry->sc = onvm_sc_create();
@@ -209,7 +184,9 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
                         if (nf->resource_usage.cpu_time_proportion > CPU_MAX) {
                                 switch (nf->state) {
                                         case ONVM_NF_STATEFUL:
-                                                load_balance_flow(nf, sc, i);
+                                                spawned_nf_id = load_balance_flow(nf, sc, i);
+                                                onvm_sc_append_entry(flow_entry->sc, ONVM_NF_ACTION_TONF,
+                                                                     spawned_nf_id);
                                                 break;
                                         default:
                                                 onvm_sc_append_entry(flow_entry->sc, ONVM_NF_ACTION_TONF,
@@ -222,39 +199,27 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
                                                      default_service_chain_id[i - 1]);
                         }
                 }
-                dest = default_service_chain_id[0];
         }
 
-        //printf("New flow\n");
         for (int i = 1; i < CHAIN_LENGTH; i++) {
                 dest = sc->sc[i].destination;
+                dest = onvm_sc_service_to_nf_map(
+                        dest, pkt);
                 nf = &nfs[dest];
-                if (nf->resource_usage.cpu_time_proportion > CPU_MAX) { // wrk benchmark
+                if (nf->resource_usage.cpu_time_proportion > CPU_MAX) {
                         switch (nf->state) {
                                 case ONVM_NF_STATELESS:
                                         load_balance_flow(nf, sc, i);
                                         break;
-                                case ONVM_NF_STATEFUL:
-                                        printf("Stateful NF balancing, already assigned a flow\n");
-                                        break;
                                 default:
-                                        //onvm_sc_append_entry(flow_entry->sc, ONVM_NF_ACTION_TONF, default_service_chain_id[i-1]);
-                                        printf("Neither stateful nor stateless: %s\n", nf->tag);
                                         break;
                         }
                 }
         }
 
-        sc->sc[1].num_packets++;
-        if (sc->sc[1].is_duplicated == 1) {
-                dup_index = sc->sc[1].num_packets % sc->sc[1].num_duplicated;
-                dest = sc->sc[1].destination_dup[dup_index];
-        } else {
-                dest = sc->sc[1].destination;
-        }
+        dest = pick_initial_dest(sc);
 
         nf = nf_local_ctx->nf;
-
         if ((flags >> 1) & 0x1) { // SYN so add connection count to service chain
                 nf->num_flows++;
                 printf("Number of flows: %ld\n", nf->num_flows);
@@ -276,7 +241,7 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
                                                 int dst_instance_id = onvm_sc_service_to_nf_map(
                                                         sc->sc[i].destination_dup[j], pkt);
                                                 onvm_nflib_send_kill_msg(dst_instance_id);
-                                                printf("Killing %d\n\n", sc->sc[i].destination_dup[j]);
+                                                printf("Killing %d\n", sc->sc[i].destination_dup[j]);
                                                 sc->sc[i].num_duplicated--;
                                                 nf->num_duplicated--; // heres the problem - nf should be changed too
                                                 sc->sc[i].destination_dup[j] = 0;
@@ -301,19 +266,20 @@ packet_handler(struct rte_mbuf *pkt, struct onvm_pkt_meta *meta,
         return 0;
 }
 
-void
-load_balance_flow(struct onvm_nf *nf, struct onvm_service_chain *sc, int index) {
+int
+load_balance_flow(struct onvm_nf *nf, struct onvm_service_chain *service_chain_flow_map, int index) {
         int num_duplicated;
+        int nf_id;
 
         num_duplicated = nf->num_duplicated;
 
         if (num_duplicated > 1 && nf->state ==
                                   ONVM_NF_STATELESS) { // If the flow is coming in and the original is overloaded, spread across dups
                 for (int j = 0; j < num_duplicated; j++) {
-                        sc->sc[index].destination_dup[j] = nf->destination_dup[j];
+                        service_chain_flow_map->sc[index].destination_dup[j] = nf->destination_dup[j];
                 }
-                sc->sc[index].is_duplicated = 1;
-                sc->sc[index].num_duplicated = num_duplicated;
+                service_chain_flow_map->sc[index].is_duplicated = 1;
+                service_chain_flow_map->sc[index].num_duplicated = num_duplicated;
                 //printf("Num duplicated: %d\n", num_duplicated);
         }
 
@@ -323,142 +289,44 @@ load_balance_flow(struct onvm_nf *nf, struct onvm_service_chain *sc, int index) 
         // Copy nf dup array into current duplicated service chain array
         if ((rte_get_tsc_cycles() - nf->time_since_scale) * TIME_TTL_MULTIPLIER /
             rte_get_timer_hz() < 10) {
-                return;
+                return -1;
         }
 
         if (num_duplicated == ONVM_MAX_CHAIN_LENGTH - 1) {
-                return;
+                return -1;
         }
 
         onvm_nflib_fork(nf->tag, 2, next_service_id);
         nf->time_since_scale = rte_get_tsc_cycles();
-        sc->sc[index].is_duplicated = 1;
+        service_chain_flow_map->sc[index].is_duplicated = 1;
         nf->num_duplicated++;
         nf->destination_dup[nf->num_duplicated - 1] = next_service_id; // 4 is the id of the new duplicated NF
+        nf_id = next_service_id;
         next_service_id++;
 
         for (int j = 0; j < nf->num_duplicated; j++) {
-                sc->sc[index].destination_dup[j] = nf->destination_dup[j];
+                service_chain_flow_map->sc[index].destination_dup[j] = nf->destination_dup[j];
         }
 
-        sc->sc[index].num_duplicated = nf->num_duplicated;
+        service_chain_flow_map->sc[index].num_duplicated = nf->num_duplicated;
+
+        return nf_id;
 }
 
 int
-create_rtehashmap(const char *name, int entries, size_t key_len) {
-        struct rte_hash_parameters *ipv4_hash_params;
+pick_initial_dest(struct onvm_service_chain *service_chain) {
+        int dup_index;
+        int dest;
 
-        ipv4_hash_params = (struct rte_hash_parameters *) rte_malloc(NULL, sizeof(struct rte_hash_parameters), 0);
-        if (!ipv4_hash_params) {
-                return -1;
-        }
-
-        char *tbl_name = rte_malloc(NULL, sizeof(name) + 1, 0);
-        /* create ipv4 hash table. use core number and cycle counter to get a unique name. */
-        ipv4_hash_params->entries = entries;
-        ipv4_hash_params->key_len = key_len;
-        ipv4_hash_params->hash_func = rte_jhash;
-        ipv4_hash_params->name = tbl_name;
-        ipv4_hash_params->socket_id = rte_socket_id();
-        ipv4_hash_params->extra_flag = 0;
-        snprintf(tbl_name, sizeof(name) + 1, "%s", name);
-        printf("Name: %s\n", tbl_name);
-
-
-        return onvm_nflib_request_ft(ipv4_hash_params);
-}
-
-static int init_lb_maps(struct onvm_nf *nf) {
-        struct tcp_lb_maps *tcp_lb_hash_maps;
-        int i, j;
-        //struct chain_meta *start_chain;
-
-        scale_tag = rte_malloc(NULL, 20, 0);
-        strncpy(scale_tag, scale_tag_cpy, 20);
-
-        for (i = 0; i < MAX_FLOWS; i++) {
-                global_flow_meta[i] = (struct flow_meta *) rte_malloc(NULL, sizeof(struct flow_meta), 0);
-                global_flow_meta[i]->service_chain = (struct onvm_nf **) rte_malloc(NULL,
-                                                                                    sizeof(struct onvm_nf *) *
-                                                                                    MAX_CHAINS, 0);
-                for (j = 0; j < MAX_CHAINS; j++) {
-                        global_flow_meta[i]->service_chain[j] = (struct onvm_nf *) rte_malloc(NULL,
-                                                                                              sizeof(struct onvm_nf),
-                                                                                              0);
-                }
-                global_flow_meta[i]->global_flow_id = -1;
-        }
-
-        default_service_chain = (struct onvm_nf **) rte_malloc(NULL,
-                                                               sizeof(struct onvm_nf *) * MAX_CHAINS, 0);
-
-        for (j = 0; j < MAX_CHAINS; j++) {
-                default_service_chain[j] = (struct onvm_nf *) rte_malloc(NULL,
-                                                                         sizeof(struct onvm_nf), 0);
-        }
-
-        //global_flow_meta[i]->service_chain[0] = NULL;
-
-        tcp_lb_hash_maps = rte_malloc(NULL, sizeof(struct tcp_lb_maps), 0);
-        tcp_lb_hash_maps->total_connections = 0;
-
-        int ret = create_rtehashmap(flow_map_name, 10, sizeof(union ipv4_5tuple_host));
-        if (ret < 0) {
-                printf("Creating hashmap failed\n");
-                exit(0);
-        }
-
-//        flow_table = onvm_ft_create(256, sizeof(struct flow_meta));
-        printf("%p\n", sdn_ft);
-
-        union ipv4_5tuple_host newkey;
-        void *lkup;
-
-        newkey.ip_dst = 500;
-        newkey.ip_src = 500;
-        newkey.port_dst = 11;
-        newkey.port_src = 10;
-//
-        flow_map = rte_hash_find_existing(flow_map_name);
-        printf("Did flow_map lookup\n");
-        if (flow_map == NULL) {
-                printf("Could not find map\n");
-                //exit(0);
+        service_chain->sc[1].num_packets++;
+        if (service_chain->sc[1].is_duplicated == 1) {
+                dup_index = service_chain->sc[1].num_packets % service_chain->sc[1].num_duplicated;
+                dest = service_chain->sc[1].destination_dup[dup_index];
         } else {
-                printf("FM addr: %p\n", flow_map);
-        }
-//
-        rte_hash_lookup_data(flow_map, (void *) &newkey, &lkup);
-
-        tcp_lb_hash_maps->global_flow_meta_freelist = rte_ring_create(global_flow_meta_freelist, MAX_FLOWS,
-                                                                      rte_socket_id(), RING_F_SP_ENQ | RING_F_SC_DEQ);
-
-        if (tcp_lb_hash_maps->global_flow_meta_freelist == NULL) {
-                printf("Could not create ring\n");
-                exit(0);
+                dest = service_chain->sc[1].destination;
         }
 
-        // TODO: allow user to input this next step it should be a loop in which the static chain is constructured
-
-        default_service_chain[0] = &nfs[3]; // ID 3 is
-        default_service_chain_id[0] = 3;
-        default_service_chain_id[1] = 4;
-
-        printf("We are here\n");
-
-        for (i = 0; i < MAX_FLOWS; i++) {
-                for (j = 0; j < MAX_CHAINS; j++) {
-                        global_flow_meta[i]->service_chain[j] = default_service_chain[j];
-                }
-        }
-
-
-        for (i = 0; i < MAX_FLOWS; i++) {
-                rte_ring_enqueue(tcp_lb_hash_maps->global_flow_meta_freelist, (void *) global_flow_meta[i]);
-        }
-
-        nf->data = (void *) tcp_lb_hash_maps;
-        return 0;
+        return dest;
 }
 
 int
@@ -495,8 +363,10 @@ main(int argc, char *argv[]) {
 
         cur_cycles = rte_get_tsc_cycles();
         last_cycle = rte_get_tsc_cycles();
-        init_lb_maps(nf_local_ctx->nf);
         next_service_id = CHAIN_LENGTH + 2;
+
+        default_service_chain_id[0] = 3;
+        default_service_chain_id[1] = 4;
 
         onvm_flow_dir_nf_init();
 

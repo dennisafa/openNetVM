@@ -27,6 +27,9 @@ void onvm_update_rusage(void) {
                 }
 
                 FILE *proc_file = fopen(proc_file_path, "r");
+                if (proc_file == NULL) {
+                        continue;
+                }
                 // TODO Error check proc_file.
 
                 unsigned long int ctime, stime;

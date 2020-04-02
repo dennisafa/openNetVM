@@ -76,7 +76,7 @@
 #define ONVM_MTCP_ID 2
 
 #define NUM_MBUFS 32767          // total number of mbufs (2^15 - 1)
-#define NF_QUEUE_RINGSIZE 16384  // size of queue for NFs
+#define NF_QUEUE_RINGSIZE 131072  // size of queue for NFs
 
 #define PACKET_READ_SIZE ((uint16_t)32)
 
