@@ -52,6 +52,7 @@
 
 #include "onvm_mgr.h"
 #include "onvm_nf.h"
+#include "onvm_rusage.h"
 #include "onvm_stats.h"
 
 /************************Internal Functions Prototypes************************/
@@ -260,6 +261,48 @@ onvm_stats_gen_event_nf_info(const char *msg, struct onvm_nf *nf) {
 }
 
 /****************************Internal functions*******************************/
+
+#define ANSI_GO_COORDS "\x1b[%d;%dH"
+#define ANSI_GO_UP "\x1b[%dA"
+#define ANSI_GO_DOWN "\x1b[%dB"
+#define ANSI_GO_FORWARD "\x1b[%dC"
+#define ANSI_GO_BACKWARD "\x1b[%dD"
+#define ANSI_FG_COLOR "\x1b[%dm"
+
+unsigned int core_graph_ringbuf_ptrs[8] = {0};
+double core_graph_history[8][16] = { { 0.0 } };
+
+static void 
+draw_core_graph(int position, int core_num) {
+        core_graph_history[position][core_graph_ringbuf_ptrs[position]] = core_rusage[core_num];
+        core_graph_ringbuf_ptrs[position] = (core_graph_ringbuf_ptrs[position] + 1) % 16;
+
+        printf(ANSI_FG_COLOR, 31 + position);
+
+        printf(ANSI_GO_COORDS, 25, 20 * position); 
+        printf(" Core %d: %lf", core_num, core_rusage[core_num]);
+
+        printf(ANSI_GO_COORDS, 26, 20 * position); 
+        for (int i = 0; i < 10; i++) {
+                printf("|");
+                printf(ANSI_GO_DOWN ANSI_GO_BACKWARD, 1, 1);
+        }
+        printf("+");
+        for (int pi = 0; pi < 16; pi++) {
+                printf(ANSI_GO_COORDS, 26, 20 * position + 2 + pi);
+                int i = (core_graph_ringbuf_ptrs[position] + pi) % 16;
+                int rusage_frac = (int)(core_graph_history[position][i] * 10);
+                for (int i = 0; i < 10; i++) {
+                        if (i >= 10 - rusage_frac)
+                                printf("#");
+                        else
+                                printf(".");
+                        printf(ANSI_GO_DOWN ANSI_GO_BACKWARD, 1, 1);
+                }
+                printf("-");
+        }
+        printf("\n");
+}
 
 static void
 onvm_stats_add_event(struct onvm_event *event_info) {
@@ -502,14 +545,16 @@ onvm_stats_display_nfs(unsigned difftime, uint8_t verbosity_level) {
                                 rx_pps, tx_pps, rx, tx, act_out, act_tonf, act_drop,
                                 nfs[i].thread_info.parent, state, rte_atomic16_read(&nfs[i].thread_info.children_cnt),
                                 rx_drop_rate, tx_drop_rate, rx_drop, tx_drop, act_next, act_buffer, act_returned);
-                        if (ONVM_NF_SHARE_CORES)
+                        if (ONVM_NF_SHARE_CORES) {
                                 fprintf(stats_out, ONVM_STATS_SHARED_CORE_CONTENT, num_wakeups, wakeup_rate);
+                        }
                         fprintf(stats_out, "\n");
                 } else {
                         fprintf(stats_out, ONVM_STATS_REG_CONTENT,
                                 nfs[i].tag, nfs[i].instance_id, nfs[i].service_id, nfs[i].thread_info.core,
                                 rx_pps, tx_pps, rx_drop, tx_drop, act_out, act_tonf, act_drop,
                                 nfs[i].resource_usage.cpu_time_proportion);
+                        fprintf(stats_out, "test\n");
                 }
                 /* Only print this information out if we haven't already printed it to the console above */
                 if (stats_out != stdout && stats_out != stderr) {
@@ -532,7 +577,14 @@ onvm_stats_display_nfs(unsigned difftime, uint8_t verbosity_level) {
                         cJSON *rusage_json;
                         cJSON_AddItemToObject(onvm_json_nf_stats[i], "Rusage", rusage_json = cJSON_CreateObject());
                         cJSON_AddNumberToObject(rusage_json, "CPU_Usage_Proportion", nfs[i].resource_usage.cpu_time_proportion);
-                            
+
+                        printf("%lf %lf\n", core_rusage[3], core_rusage[4]);
+                        cJSON *cpu_usage_json = cJSON_CreateArray();
+                        for (int i = 0; i < MAX_NFS; i++) {
+                                cJSON *num = cJSON_CreateNumber(core_rusage[i]);
+                                cJSON_AddItemToArray(cpu_usage_json, num);
+                        }
+                        cJSON_AddItemToObject(rusage_json, "Core_CPU_Usages", cpu_usage_json);
 
                         free(nf_label);
                         nf_label = NULL;
@@ -575,6 +627,9 @@ onvm_stats_display_nfs(unsigned difftime, uint8_t verbosity_level) {
                 fprintf(stats_out, "\n\nShared core stats\n");
                 fprintf(stats_out, "-----------------\n");
                 onvm_stats_display_client_wakeup_thread_context(difftime);
+                for (int i = 0; i < 8; i++) {
+                        draw_core_graph(i, 2 + i);
+                }
         }
 
 }

@@ -8,7 +8,11 @@ export type OnvmNfData = {|
   RX_Drop_Rate: number,
   instance_id: number,
   service_id: number,
-  core: number
+  core: number,
+  Rusage: {|
+    CPU_Usage_Proportion: number,
+    Core_CPU_Usages: Array<number>
+  |}
 |};
 
 export type ColumnRestoreData = Array<Array<string | number>>;
@@ -20,7 +24,8 @@ type NFColumnRestoreMap = { [nfLabel: string]: ColumnRestoreData };
 type OnvmResponse = {|
   last_updated: string,
   onvm_port_stats: Object, // FIXME: specify type
-  onvm_nf_stats: {| [string]: OnvmNfData |}
+  onvm_nf_stats: {| [string]: OnvmNfData |},
+  onvm_core_stats: Object // FIXME: specify type
 |};
 
 export type OnvmEvent = {|
