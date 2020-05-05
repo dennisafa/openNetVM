@@ -6,6 +6,10 @@ _Please let us know if you use OpenNetVM in your research by [emailing us](mailt
 _Want to get started quickly?_ Try using our NSF CloudLab profile: https://www.cloudlab.us/p/GWCloudLab/onvm
 
 
+SeniorDesign
+--
+This is the CoreCode branch. To setup, [install][installguide] openNetVM as normal. Then, run the [tcp_monitor][examples/tcp_monitor]. Only simple_forward and basic_monitor is currently supported, ensure they are running with service ID 3 or 4. 
+
 Notes
 --
 
